@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">KeyApp</string>
+    <string name="ime_name">KeyApp Offline Japanese Keyboard</string>
+    <string name="always_private">Always use private mode</string>
+    <string name="clear_learning">Clear learned history and predictions</string>
+    <string name="open_source_notices">Open-source notices</string>
+    <string name="open_keyboard_settings">Open Android Keyboard Settings</string>
+</resources>

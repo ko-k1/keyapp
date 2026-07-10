@@ -1,15 +1,21 @@
 # KeyApp
 
-Minimal Android custom keyboard / IME skeleton.
+Offline Android keyboard with raw US QWERTY and Japanese 12-key flick input.
 
 ## Features
 
 - English QWERTY raw input
-- Japanese 12-key flick input skeleton
+- Japanese 12-key flick input with local Mozc kana-to-kanji conversion
+- Ranked compact/expanded candidate UI and local adaptive learning
+- Automatic private mode for sensitive fields plus a manual privacy toggle
 - Clipboard paste panel
-- Resize toggle skeleton
 - Simple Apple-like rounded translucent visual
-- Java-only implementation for easier CLI builds
+- Safe kana-only entry when Mozc assets are unavailable
+
+No network permission or runtime download is used. Mozc is pinned to
+`7f1973ba0ee6c94483253ecfa70ff33dd084d5c3`. On an x86_64 Linux builder,
+run `scripts/refresh-mozc-prebuilts.sh` to rebuild and verify `libmozc.so`
+and `mozc.data` before normal distribution builds.
 
 ## Build in Termux proot Ubuntu
 
@@ -30,7 +36,7 @@ source ~/.bashrc
 yes | sdkmanager --licenses
 sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 cd keyapp
-gradle assembleDebug
+./gradlew testDebugUnitTest assembleDebug
 ```
 
 APK output:
@@ -42,3 +48,9 @@ app/build/outputs/apk/debug/app-debug.apk
 ## Enable keyboard
 
 Android Settings -> System -> Keyboard -> On-screen keyboard -> Manage keyboards -> KeyApp Keyboard
+
+## Source archive
+
+`scripts/sync-source-archive.sh` regenerates `keyapp-source.zip` from the
+Git index. `scripts/verify-source-archive.sh` rejects stale archives and
+generated build output.

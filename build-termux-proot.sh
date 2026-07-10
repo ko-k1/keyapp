@@ -18,9 +18,4 @@ fi
 yes | sdkmanager --licenses >/dev/null
 sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-if command -v gradle >/dev/null; then
-  gradle assembleDebug
-else
-  echo "Gradle not found. Install Gradle 8.x, then run: gradle assembleDebug"
-  exit 1
-fi
+./gradlew assembleDebug
