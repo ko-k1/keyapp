@@ -17,11 +17,9 @@ import java.util.Locale;
 
 /** Draws keys and candidates only.  The service owns every composition decision. */
 public final class KeyboardView extends View {
-    public enum KanaModifier { SMALL, DAKUTEN, HANDAKUTEN, LARGE }
-
     public interface OnKeyboardAction {
         void onKana(String kana);
-        void onKanaModifier(KanaModifier modifier);
+        void onKanaModifier();
         void onBackspace(boolean japanese);
         void onSpace(boolean japanese);
         void onEnter();
@@ -35,11 +33,13 @@ public final class KeyboardView extends View {
         public final int id;
         public final String value;
         public final String label;
+        public final boolean focused;
 
-        public Candidate(int id, String value, String label) {
+        public Candidate(int id, String value, String label, boolean focused) {
             this.id = id;
             this.value = value;
             this.label = label;
+            this.focused = focused;
         }
     }
 
@@ -47,6 +47,7 @@ public final class KeyboardView extends View {
     private static final float CANDIDATE_BAR_DP = 40f;
     private static final float EXPANDED_CANDIDATES_DP = 116f;
     private static final int STRIP_CANDIDATE_COUNT = 4;
+    private static final int HIGHLIGHT_COLOR = Color.rgb(80, 80, 110);
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final List<Key> keys = new ArrayList<>();
@@ -60,7 +61,6 @@ public final class KeyboardView extends View {
     private boolean candidatesExpanded;
     private boolean engineAvailable;
     private boolean privateMode;
-    private int modifierIndex;
     private int candidateScroll;
     private int downKeyIndex = -1;
     private float downX;
@@ -139,7 +139,7 @@ public final class KeyboardView extends View {
         for (int i = 0; i < keys.size(); i++) {
             Key key = keys.get(i);
             boolean pressed = i == downKeyIndex;
-            paint.setColor(pressed ? Color.rgb(80, 80, 110) : Color.argb(190, 50, 50, 65));
+            paint.setColor(pressed ? HIGHLIGHT_COLOR : Color.argb(190, 50, 50, 65));
             canvas.drawRoundRect(key.rect, dp(12), dp(12), paint);
             paint.setColor(pressed ? Color.WHITE : Color.rgb(220, 220, 230));
             paint.setTextAlign(Paint.Align.CENTER);
@@ -174,7 +174,7 @@ public final class KeyboardView extends View {
             paint.setTextSize(dp(14));
             float width = Math.min(right - x, Math.max(dp(58), paint.measureText(candidate.value) + dp(24)));
             RectF rect = new RectF(x, dp(4), x + width - dp(4), bar - dp(4));
-            paint.setColor(Color.argb(120, 68, 68, 92));
+            paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : Color.argb(120, 68, 68, 92));
             canvas.drawRoundRect(rect, dp(8), dp(8), paint);
             paint.setColor(Color.rgb(225, 225, 238));
             paint.setTextAlign(Paint.Align.CENTER);
@@ -196,7 +196,7 @@ public final class KeyboardView extends View {
             if (index >= candidates.size()) break;
             Candidate candidate = candidates.get(index);
             RectF rect = new RectF(dp(8), top + row * rowHeight + dp(2), getWidth() - dp(8), top + (row + 1) * rowHeight - dp(2));
-            paint.setColor(Color.argb(140, 68, 68, 92));
+            paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : Color.argb(140, 68, 68, 92));
             canvas.drawRoundRect(rect, dp(7), dp(7), paint);
             paint.setTextAlign(Paint.Align.LEFT);
             paint.setTextSize(dp(16));
@@ -250,8 +250,7 @@ public final class KeyboardView extends View {
         addRow(width, top, new String[]{"clip", "あ", "か", "さ", "⌫"}, new String[]{"#clip", "あ", "か", "さ", "#del"});
         addRow(width, top + dp(50), new String[]{"ABC", "た", "な", "は", "space"}, new String[]{"#en", "た", "な", "は", " "});
         addRow(width, top + dp(100), new String[]{"123", "ま", "や", "ら", ""}, new String[]{"#sym", "ま", "や", "ら", ""});
-        String modifier = new String[]{"小", "゛", "゜", "大"}[modifierIndex];
-        addRow(width, top + dp(150), new String[]{"", modifier, "わ", "、。", "return"}, new String[]{"", "#small", "わ", "。", "#enter"});
+        addRow(width, top + dp(150), new String[]{"", "小", "わ", "、。", "return"}, new String[]{"", "#small", "わ", "、", "#enter"});
     }
 
     private void addRow(int width, float top, String[] labels, String[] values) {
@@ -391,10 +390,7 @@ public final class KeyboardView extends View {
             case "#paste": pasteClipboard(); return;
             case "#clear": clipboard = false; invalidate(); return;
             case "#small":
-                KanaModifier modifier = KanaModifier.values()[modifierIndex];
-                modifierIndex = (modifierIndex + 1) % KanaModifier.values().length;
-                action.onKanaModifier(modifier);
-                invalidate();
+                action.onKanaModifier();
                 return;
             default:
                 break;
@@ -433,7 +429,8 @@ public final class KeyboardView extends View {
                 {"さ", "し", "す", "せ", "そ"}, {"た", "ち", "つ", "て", "と"},
                 {"な", "に", "ぬ", "ね", "の"}, {"は", "ひ", "ふ", "へ", "ほ"},
                 {"ま", "み", "む", "め", "も"}, {"や", "ゆ", "よ", "や", "よ"},
-                {"ら", "り", "る", "れ", "ろ"}, {"わ", "を", "ん", "ー", "わ"}
+                {"ら", "り", "る", "れ", "ろ"}, {"わ", "を", "ん", "ー", "わ"},
+                {"、", "。", "？", "！", "・"}
         };
         if (Math.abs(dx) + Math.abs(dy) <= dp(20)) return base;
         int index = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 3 : 1) : (dy > 0 ? 4 : 2);

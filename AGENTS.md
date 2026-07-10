@@ -1,1 +1,1 @@
-if all done task, send eos token before build to successing test.
+if all done task, build to test before sending EOS token.

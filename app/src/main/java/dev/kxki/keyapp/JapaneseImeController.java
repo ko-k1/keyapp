@@ -17,6 +17,15 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /** Serializes Mozc and projects its protocol output into Android edit operations. */
 final class JapaneseImeController implements AutoCloseable {
+    private static final String[] KANA_MODIFIER_CYCLES = {
+            "あぁ", "いぃ", "うぅゔ", "えぇ", "おぉ",
+            "かゕが", "きぎ", "くぐ", "けゖげ", "こご",
+            "さざ", "しじ", "すず", "せぜ", "そぞ",
+            "ただ", "ちぢ", "つっづ", "てで", "とど",
+            "はばぱ", "ひびぴ", "ふぶぷ", "へべぺ", "ほぼぽ",
+            "やゃ", "ゆゅ", "よょ", "わゎ"
+    };
+
     interface Transport {
         boolean open();
         boolean isAvailable();
@@ -38,11 +47,13 @@ final class JapaneseImeController implements AutoCloseable {
         final int id;
         final String value;
         final String label;
+        final boolean focused;
 
-        Candidate(int id, String value, String label) {
+        Candidate(int id, String value, String label, boolean focused) {
             this.id = id;
             this.value = value;
             this.label = label;
+            this.focused = focused;
         }
     }
 
@@ -157,11 +168,11 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void modifyKana(KeyboardView.KanaModifier modifier) {
+    void modifyKana() {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || !japanese || rawKana.isEmpty()) return;
-            String changed = transformLast(rawKana, modifier);
+            String changed = transformLast(rawKana);
             if (changed.equals(rawKana)) return;
             rawKana = changed;
             if (!ensureSession(token)) {
@@ -378,7 +389,8 @@ final class JapaneseImeController implements AutoCloseable {
             }
             rawKana = reading.toString();
             emitComposing(token, visible.toString());
-        } else if (output.hasResult() || rawKana.isEmpty()) {
+        } else {
+            rawKana = "";
             emitFinish(token);
         }
         candidates = readCandidates(output);
@@ -395,9 +407,11 @@ final class JapaneseImeController implements AutoCloseable {
             return Collections.emptyList();
         }
         List<Candidate> result = new ArrayList<>(list.getCandidatesCount());
-        for (ProtoCandidateWindow.CandidateWord word : list.getCandidatesList()) {
+        for (int i = 0; i < list.getCandidatesCount(); i++) {
+            ProtoCandidateWindow.CandidateWord word = list.getCandidates(i);
             String label = word.hasAnnotation() ? word.getAnnotation().getDescription() : "";
-            result.add(new Candidate(word.getId(), word.getValue(), label));
+            result.add(new Candidate(word.getId(), word.getValue(), label,
+                    list.hasFocusedIndex() && list.getFocusedIndex() == i));
         }
         return result;
     }
@@ -447,7 +461,12 @@ final class JapaneseImeController implements AutoCloseable {
     private void emitComposing(long token, String text) { post(token, () -> listener.onComposing(token, text)); }
     private void emitCommit(long token, String text) { post(token, () -> listener.onCommit(token, text)); }
     private void emitDelete(long token, int length) { post(token, () -> listener.onDeleteBefore(token, length)); }
-    private void emitFinish(long token) { post(token, () -> listener.onFinishComposing(token)); }
+    private void emitFinish(long token) {
+        post(token, () -> {
+            listener.onComposing(token, "");
+            listener.onFinishComposing(token);
+        });
+    }
     private void emitEditorAction(long token) { post(token, () -> listener.onEditorAction(token)); }
 
     private void post(long token, Runnable callback) {
@@ -456,24 +475,18 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    static String transformLast(String text, KeyboardView.KanaModifier modifier) {
+    static String transformLast(String text) {
         if (text.isEmpty()) return text;
         int start = text.offsetByCodePoints(text.length(), -1);
         String last = text.substring(start);
-        String changed;
-        switch (modifier) {
-            case SMALL: changed = map(last, "あいうえおつやゆよわかけ", "ぁぃぅぇぉっゃゅょゎゕゖ"); break;
-            case DAKUTEN: changed = map(last, "かきくけこさしすせそたちつてとはひふへほゕゖ", "がぎぐげござじずぜぞだぢづでどばびぶべぼがげ"); break;
-            case HANDAKUTEN: changed = map(last, "はひふへほ", "ぱぴぷぺぽ"); break;
-            case LARGE: changed = map(last, "ぁぃぅぇぉっゃゅょゎゕゖ", "あいうえおつやゆよわかけ"); break;
-            default: changed = last;
+        for (String cycle : KANA_MODIFIER_CYCLES) {
+            int index = cycle.indexOf(last);
+            if (index >= 0) {
+                return text.substring(0, start)
+                        + cycle.charAt((index + 1) % cycle.length());
+            }
         }
-        return text.substring(0, start) + changed;
-    }
-
-    private static String map(String value, String from, String to) {
-        int index = from.indexOf(value);
-        return index < 0 ? value : String.valueOf(to.charAt(index));
+        return text;
     }
 
     private static String removeLastCodePoint(String value) {

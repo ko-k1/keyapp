@@ -68,7 +68,7 @@ public final class KeyAppImeService extends InputMethodService
     }
 
     @Override public void onKana(String kana) { controller.kana(kana); }
-    @Override public void onKanaModifier(KeyboardView.KanaModifier modifier) { controller.modifyKana(modifier); }
+    @Override public void onKanaModifier() { controller.modifyKana(); }
     @Override public void onBackspace(boolean japanese) { controller.backspace(japanese); }
     @Override public void onSpace(boolean japanese) { controller.space(japanese); }
     @Override public void onEnter() { controller.enter(); }
@@ -127,7 +127,8 @@ public final class KeyAppImeService extends InputMethodService
         if (keyboard == null) return;
         List<KeyboardView.Candidate> display = new ArrayList<>(next.candidates.size());
         for (JapaneseImeController.Candidate candidate : next.candidates) {
-            display.add(new KeyboardView.Candidate(candidate.id, candidate.value, candidate.label));
+            display.add(new KeyboardView.Candidate(
+                    candidate.id, candidate.value, candidate.label, candidate.focused));
         }
         keyboard.setMozcState(display, next.available, next.privateMode);
     }

@@ -27,6 +27,7 @@ public final class JapaneseImeControllerTest {
         assertTrue(keyInput.getRequest().getIsIncognitoMode());
         assertEquals("か", listener.composing);
         assertEquals(42, listener.state.candidates.get(0).id);
+        assertTrue(listener.state.candidates.get(0).focused);
 
         controller.selectCandidate(42);
         assertEquals(42, transport.selectedCandidateId);
@@ -43,7 +44,7 @@ public final class JapaneseImeControllerTest {
         controller.begin(false);
         controller.setJapanese(true);
         controller.kana("は");
-        controller.modifyKana(KeyboardView.KanaModifier.DAKUTEN);
+        controller.modifyKana();
         assertEquals("ば", listener.composing);
         controller.enter();
         assertEquals("ば", listener.committed);
@@ -64,8 +65,29 @@ public final class JapaneseImeControllerTest {
         transport.deleteOnBackspace = true;
         controller.backspace(true);
         assertEquals(1, listener.deleted);
-        assertEquals("ぱ", JapaneseImeController.transformLast("は", KeyboardView.KanaModifier.HANDAKUTEN));
-        assertEquals("ゃ", JapaneseImeController.transformLast("や", KeyboardView.KanaModifier.SMALL));
+        assertEquals("ば", JapaneseImeController.transformLast("は"));
+        assertEquals("ぱ", JapaneseImeController.transformLast("ば"));
+        assertEquals("は", JapaneseImeController.transformLast("ぱ"));
+        assertEquals("っ", JapaneseImeController.transformLast("つ"));
+        assertEquals("づ", JapaneseImeController.transformLast("っ"));
+        assertEquals("ゃ", JapaneseImeController.transformLast("や"));
+        assertEquals("や", JapaneseImeController.transformLast("ゃ"));
+        assertEquals("ん", JapaneseImeController.transformLast("ん"));
+    }
+
+    @Test public void backspaceClearsTheFinalKana() {
+        FakeTransport transport = new FakeTransport();
+        RecordingListener listener = new RecordingListener();
+        JapaneseImeController controller =
+                new JapaneseImeController(transport, listener, Runnable::run, Runnable::run);
+
+        controller.begin(false);
+        controller.setJapanese(true);
+        controller.kana("か");
+        controller.backspace(true);
+
+        assertEquals("", listener.composing);
+        assertTrue(listener.finished);
     }
 
     private static final class FakeTransport implements JapaneseImeController.Transport {
@@ -90,7 +112,8 @@ public final class JapaneseImeControllerTest {
                     && deleteOnBackspace) {
                 output.setDeletionRange(ProtoCommands.DeletionRange.newBuilder()
                         .setOffset(-1).setLength(1));
-            } else if (input.getType() == ProtoCommands.Input.CommandType.SEND_KEY) {
+            } else if (input.getType() == ProtoCommands.Input.CommandType.SEND_KEY
+                    && !input.getKey().hasSpecialKey()) {
                 ProtoCommands.Preedit.Segment segment = ProtoCommands.Preedit.Segment.newBuilder()
                         .setAnnotation(ProtoCommands.Preedit.Segment.Annotation.UNDERLINE)
                         .setValue("か").setValueLength(1).setKey("か").build();
@@ -99,9 +122,9 @@ public final class JapaneseImeControllerTest {
                         ProtoCandidateWindow.CandidateWord.newBuilder()
                                 .setId(42).setIndex(0).setKey("か").setValue("火").build();
                 output.setIncognitoCandidateWords(ProtoCandidateWindow.CandidateList.newBuilder()
-                        .addCandidates(word));
+                        .setFocusedIndex(0).addCandidates(word));
                 output.setAllCandidateWords(ProtoCandidateWindow.CandidateList.newBuilder()
-                        .addCandidates(word));
+                        .setFocusedIndex(0).addCandidates(word));
             } else if (input.getType() == ProtoCommands.Input.CommandType.SEND_COMMAND
                     && input.getCommand().getType()
                     == ProtoCommands.SessionCommand.CommandType.SELECT_CANDIDATE) {
@@ -125,12 +148,13 @@ public final class JapaneseImeControllerTest {
         String committed = "";
         int deleted;
         boolean editorAction;
+        boolean finished;
         JapaneseImeController.State state;
 
         @Override public void onComposing(long token, String text) { composing = text; }
         @Override public void onCommit(long token, String text) { committed += text; }
         @Override public void onDeleteBefore(long token, int length) { deleted += length; }
-        @Override public void onFinishComposing(long token) {}
+        @Override public void onFinishComposing(long token) { finished = true; }
         @Override public void onEditorAction(long token) { editorAction = true; }
         @Override public void onState(long token, JapaneseImeController.State next) { state = next; }
     }
