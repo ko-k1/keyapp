@@ -70,6 +70,7 @@ public final class KeyAppImeService extends InputMethodService
     @Override public void onKana(String kana) { controller.kana(kana); }
     @Override public void onKanaModifier() { controller.modifyKana(); }
     @Override public void onBackspace(boolean japanese) { controller.backspace(japanese); }
+    @Override public void onDeleteRange(KeyboardView.DeleteRange range) { controller.deleteRange(range); }
     @Override public void onSpace(boolean japanese) { controller.space(japanese); }
     @Override public void onEnter() { controller.enter(); }
     @Override public void onRawText(String text) { controller.rawText(text); }
@@ -96,6 +97,17 @@ public final class KeyAppImeService extends InputMethodService
     @Override public void onDeleteBefore(long token, int length) {
         InputConnection connection = connection(token);
         if (connection != null) connection.deleteSurroundingText(length, 0);
+    }
+
+    @Override public void onDeleteRange(long token, KeyboardView.DeleteRange range) {
+        InputConnection connection = connection(token);
+        if (connection == null) return;
+        CharSequence before = range == KeyboardView.DeleteRange.TO_END
+                ? null : connection.getTextBeforeCursor(Integer.MAX_VALUE, 0);
+        CharSequence after = range == KeyboardView.DeleteRange.TO_START
+                ? null : connection.getTextAfterCursor(Integer.MAX_VALUE, 0);
+        connection.deleteSurroundingText(
+                before == null ? 0 : before.length(), after == null ? 0 : after.length());
     }
 
     @Override public void onFinishComposing(long token) {

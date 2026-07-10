@@ -90,6 +90,17 @@ public final class JapaneseImeControllerTest {
         assertTrue(listener.finished);
     }
 
+    @Test public void backspaceFlickMapsDeletionRanges() {
+        assertEquals(KeyboardView.DeleteRange.TO_END,
+                KeyboardView.backspaceFlick(0, -30, 20));
+        assertEquals(KeyboardView.DeleteRange.TO_START,
+                KeyboardView.backspaceFlick(0, 30, 20));
+        assertEquals(KeyboardView.DeleteRange.ALL,
+                KeyboardView.backspaceFlick(-30, 0, 20));
+        assertEquals(null, KeyboardView.backspaceFlick(30, 0, 20));
+        assertEquals(null, KeyboardView.backspaceFlick(0, 0, 20));
+    }
+
     private static final class FakeTransport implements JapaneseImeController.Transport {
         final List<ProtoCommands.Input> inputs = new ArrayList<>();
         boolean available = true;
@@ -154,6 +165,7 @@ public final class JapaneseImeControllerTest {
         @Override public void onComposing(long token, String text) { composing = text; }
         @Override public void onCommit(long token, String text) { committed += text; }
         @Override public void onDeleteBefore(long token, int length) { deleted += length; }
+        @Override public void onDeleteRange(long token, KeyboardView.DeleteRange range) {}
         @Override public void onFinishComposing(long token) { finished = true; }
         @Override public void onEditorAction(long token) { editorAction = true; }
         @Override public void onState(long token, JapaneseImeController.State next) { state = next; }

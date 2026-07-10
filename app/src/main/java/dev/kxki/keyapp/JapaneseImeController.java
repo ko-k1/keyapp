@@ -38,6 +38,7 @@ final class JapaneseImeController implements AutoCloseable {
         void onComposing(long token, String text);
         void onCommit(long token, String text);
         void onDeleteBefore(long token, int length);
+        void onDeleteRange(long token, KeyboardView.DeleteRange range);
         void onFinishComposing(long token);
         void onEditorAction(long token);
         void onState(long token, State state);
@@ -215,6 +216,16 @@ final class JapaneseImeController implements AutoCloseable {
                     .setSpecialKey(ProtoCommands.KeyEvent.SpecialKey.BACKSPACE)
                     .build();
             project(token, evaluate(sessionInput(ProtoCommands.Input.CommandType.SEND_KEY).setKey(key).build()));
+        });
+    }
+
+    void deleteRange(KeyboardView.DeleteRange range) {
+        long token = currentToken.get();
+        serial.execute(() -> {
+            if (!isCurrent(token)) return;
+            finishCurrent(token, true);
+            emitFinish(token);
+            emitDeleteRange(token, range);
         });
     }
 
@@ -461,6 +472,9 @@ final class JapaneseImeController implements AutoCloseable {
     private void emitComposing(long token, String text) { post(token, () -> listener.onComposing(token, text)); }
     private void emitCommit(long token, String text) { post(token, () -> listener.onCommit(token, text)); }
     private void emitDelete(long token, int length) { post(token, () -> listener.onDeleteBefore(token, length)); }
+    private void emitDeleteRange(long token, KeyboardView.DeleteRange range) {
+        post(token, () -> listener.onDeleteRange(token, range));
+    }
     private void emitFinish(long token) {
         post(token, () -> {
             listener.onComposing(token, "");

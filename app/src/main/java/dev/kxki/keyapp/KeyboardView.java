@@ -19,10 +19,13 @@ import java.util.Locale;
 
 /** Draws keys and candidates only.  The service owns every composition decision. */
 public final class KeyboardView extends View {
+    public enum DeleteRange { TO_END, TO_START, ALL }
+
     public interface OnKeyboardAction {
         void onKana(String kana);
         void onKanaModifier();
         void onBackspace(boolean japanese);
+        void onDeleteRange(DeleteRange range);
         void onSpace(boolean japanese);
         void onEnter();
         void onRawText(String text);
@@ -49,7 +52,7 @@ public final class KeyboardView extends View {
     private static final float CANDIDATE_BAR_DP = 40f;
     private static final float EXPANDED_CANDIDATES_DP = 116f;
     private static final int STRIP_CANDIDATE_COUNT = 4;
-    private static final int HIGHLIGHT_COLOR = Color.rgb(80, 80, 110);
+    private static final int HIGHLIGHT_COLOR = 0xff50506e;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final List<Key> keys = new ArrayList<>();
@@ -309,6 +312,11 @@ public final class KeyboardView extends View {
             invalidate();
             return true;
         }
+        if (event.getAction() == MotionEvent.ACTION_MOVE
+                && downKeyIndex >= 0 && "#del".equals(keys.get(downKeyIndex).value)
+                && Math.abs(event.getX() - downX) + Math.abs(event.getY() - downY) > dp(20)) {
+            repeatHandler.removeCallbacks(repeatRunnable);
+        }
         if (event.getAction() == MotionEvent.ACTION_MOVE && candidateGesture && candidatesExpanded) {
             float delta = event.getY() - downY;
             if (Math.abs(delta) > dp(10)) {
@@ -376,7 +384,11 @@ public final class KeyboardView extends View {
         if (action == null) return;
         String value = key.value;
         switch (value) {
-            case "#del": action.onBackspace(japanese && !symbols); return;
+            case "#del":
+                DeleteRange range = japanese && !symbols ? backspaceFlick(dx, dy, dp(20)) : null;
+                if (range == null) action.onBackspace(japanese && !symbols);
+                else action.onDeleteRange(range);
+                return;
             case "#enter": action.onEnter(); return;
             case "#shift": shifted = !shifted; invalidate(); return;
             case "#sym":
@@ -438,6 +450,12 @@ public final class KeyboardView extends View {
     private int keyAt(float x, float y) {
         for (int i = 0; i < keys.size(); i++) if (keys.get(i).rect.contains(x, y)) return i;
         return -1;
+    }
+
+    static DeleteRange backspaceFlick(float dx, float dy, float threshold) {
+        if (Math.abs(dx) + Math.abs(dy) <= threshold) return null;
+        if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? DeleteRange.ALL : null;
+        return dy < 0 ? DeleteRange.TO_END : DeleteRange.TO_START;
     }
 
     private String flick(String base, float dx, float dy) {
