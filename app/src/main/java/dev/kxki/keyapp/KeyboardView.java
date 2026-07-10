@@ -7,6 +7,8 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -52,6 +54,15 @@ public final class KeyboardView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final List<Key> keys = new ArrayList<>();
     private final List<CandidateHit> candidateHits = new ArrayList<>();
+    private final Handler repeatHandler = new Handler(Looper.getMainLooper());
+    private final Runnable repeatRunnable = new Runnable() {
+        @Override public void run() {
+            if (downKeyIndex >= 0 && downKeyIndex < keys.size()) {
+                handle(keys.get(downKeyIndex), 0, 0);
+                repeatHandler.postDelayed(this, 50);
+            }
+        }
+    };
 
     private OnKeyboardAction action;
     private boolean japanese;
@@ -291,6 +302,10 @@ public final class KeyboardView extends View {
                 return true;
             }
             downKeyIndex = keyAt(downX, downY);
+            if (downKeyIndex >= 0 && "#del".equals(keys.get(downKeyIndex).value)) {
+                repeatHandler.removeCallbacks(repeatRunnable);
+                repeatHandler.postDelayed(repeatRunnable, 400);
+            }
             invalidate();
             return true;
         }
@@ -306,6 +321,7 @@ public final class KeyboardView extends View {
             return true;
         }
         if (event.getAction() == MotionEvent.ACTION_UP) {
+            repeatHandler.removeCallbacks(repeatRunnable);
             if (candidateGesture) {
                 performClick();
                 handleCandidateTouch(event.getX(), event.getY());
@@ -324,6 +340,7 @@ public final class KeyboardView extends View {
             return true;
         }
         if (event.getAction() == MotionEvent.ACTION_CANCEL) {
+            repeatHandler.removeCallbacks(repeatRunnable);
             downKeyIndex = -1;
             candidateGesture = false;
             invalidate();
