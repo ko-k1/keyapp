@@ -255,7 +255,7 @@ final class JapaneseImeController implements AutoCloseable {
         serial.execute(() -> {
             if (!isCurrent(token) || sessionId == 0 || !transport.isAvailable()) return;
             project(token, sendCommand(ProtoCommands.SessionCommand.newBuilder()
-                    .setType(ProtoCommands.SessionCommand.CommandType.SELECT_CANDIDATE)
+                    .setType(ProtoCommands.SessionCommand.CommandType.SUBMIT_CANDIDATE)
                     .setId(candidateId)
                     .build()));
         });

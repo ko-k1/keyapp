@@ -32,6 +32,7 @@ public final class JapaneseImeControllerTest {
         controller.space(true);
         assertEquals(2, listener.state.candidates.size());
         assertTrue(listener.state.candidates.get(1).focused);
+        assertEquals("", listener.committed);
 
         controller.selectCandidate(42);
         assertEquals(42, transport.selectedCandidateId);
@@ -157,7 +158,7 @@ public final class JapaneseImeControllerTest {
                                 .setIndex(1).setId(43).setValue("蚊")));
             } else if (input.getType() == ProtoCommands.Input.CommandType.SEND_COMMAND
                     && input.getCommand().getType()
-                    == ProtoCommands.SessionCommand.CommandType.SELECT_CANDIDATE) {
+                    == ProtoCommands.SessionCommand.CommandType.SUBMIT_CANDIDATE) {
                 selectedCandidateId = input.getCommand().getId();
                 output.setResult(ProtoCommands.Result.newBuilder()
                         .setType(ProtoCommands.Result.ResultType.STRING).setValue("火"));
