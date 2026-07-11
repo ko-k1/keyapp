@@ -29,6 +29,10 @@ public final class JapaneseImeControllerTest {
         assertEquals(42, listener.state.candidates.get(0).id);
         assertTrue(listener.state.candidates.get(0).focused);
 
+        controller.space(true);
+        assertEquals(2, listener.state.candidates.size());
+        assertTrue(listener.state.candidates.get(1).focused);
+
         controller.selectCandidate(42);
         assertEquals(42, transport.selectedCandidateId);
         assertEquals("火", listener.committed);
@@ -132,10 +136,25 @@ public final class JapaneseImeControllerTest {
                 ProtoCandidateWindow.CandidateWord word =
                         ProtoCandidateWindow.CandidateWord.newBuilder()
                                 .setId(42).setIndex(0).setKey("か").setValue("火").build();
+                ProtoCandidateWindow.CandidateWord second =
+                        ProtoCandidateWindow.CandidateWord.newBuilder()
+                                .setId(43).setIndex(1).setKey("か").setValue("蚊").build();
                 output.setIncognitoCandidateWords(ProtoCandidateWindow.CandidateList.newBuilder()
-                        .setFocusedIndex(0).addCandidates(word));
+                        .setFocusedIndex(0).addCandidates(word).addCandidates(second));
                 output.setAllCandidateWords(ProtoCandidateWindow.CandidateList.newBuilder()
-                        .setFocusedIndex(0).addCandidates(word));
+                        .setFocusedIndex(0).addCandidates(word).addCandidates(second));
+            } else if (input.getType() == ProtoCommands.Input.CommandType.SEND_KEY
+                    && input.getKey().getSpecialKey() == ProtoCommands.KeyEvent.SpecialKey.SPACE) {
+                ProtoCommands.Preedit.Segment segment = ProtoCommands.Preedit.Segment.newBuilder()
+                        .setAnnotation(ProtoCommands.Preedit.Segment.Annotation.HIGHLIGHT)
+                        .setValue("蚊").setValueLength(1).setKey("か").build();
+                output.setPreedit(ProtoCommands.Preedit.newBuilder().setCursor(1).addSegment(segment));
+                output.setCandidateWindow(ProtoCandidateWindow.CandidateWindow.newBuilder()
+                        .setSize(2).setPosition(0).setFocusedIndex(1)
+                        .addCandidate(ProtoCandidateWindow.CandidateWindow.Candidate.newBuilder()
+                                .setIndex(0).setId(42).setValue("火"))
+                        .addCandidate(ProtoCandidateWindow.CandidateWindow.Candidate.newBuilder()
+                                .setIndex(1).setId(43).setValue("蚊")));
             } else if (input.getType() == ProtoCommands.Input.CommandType.SEND_COMMAND
                     && input.getCommand().getType()
                     == ProtoCommands.SessionCommand.CommandType.SELECT_CANDIDATE) {

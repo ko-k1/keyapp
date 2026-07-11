@@ -53,7 +53,6 @@ public final class KeyboardView extends View {
     private static final float NORMAL_HEIGHT_DP = 300f;
     private static final float CANDIDATE_BAR_DP = 40f;
     private static final float EXPANDED_CANDIDATES_DP = 116f;
-    private static final int STRIP_CANDIDATE_COUNT = 4;
     private static final int HIGHLIGHT_COLOR = 0xff50506e;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -71,6 +70,9 @@ public final class KeyboardView extends View {
     private boolean engineAvailable;
     private boolean privateMode;
     private int candidateScroll;
+    private float candidateStripScroll;
+    private float candidateStripMaxScroll;
+    private boolean revealFocusedCandidate;
     private int candidatePointerId = MotionEvent.INVALID_POINTER_ID;
     private List<Candidate> candidates = Collections.emptyList();
 
@@ -91,17 +93,21 @@ public final class KeyboardView extends View {
         final float downX;
         final float downY;
         final boolean candidate;
+        final boolean candidateStrip;
+        float candidateX;
         float candidateY;
         boolean candidateDrag;
         boolean shiftLongPressed;
         Runnable repeat;
         Runnable shiftLongPress;
 
-        PointerState(Key key, float x, float y, boolean candidate) {
+        PointerState(Key key, float x, float y, boolean candidate, boolean candidateStrip) {
             this.key = key;
             this.downX = x;
             this.downY = y;
             this.candidate = candidate;
+            this.candidateStrip = candidateStrip;
+            this.candidateX = x;
             this.candidateY = y;
         }
     }
@@ -135,15 +141,26 @@ public final class KeyboardView extends View {
         symbols = false;
         candidatesExpanded = false;
         candidateScroll = 0;
+        candidateStripScroll = 0;
+        candidateStripMaxScroll = 0;
         candidates = Collections.emptyList();
         requestLayout();
         invalidate();
     }
 
     public void setMozcState(List<Candidate> nextCandidates, boolean available, boolean isPrivate) {
-        candidates = nextCandidates == null ? Collections.emptyList() : new ArrayList<>(nextCandidates);
+        List<Candidate> next = nextCandidates == null
+                ? Collections.emptyList() : new ArrayList<>(nextCandidates);
+        boolean contentChanged = !sameCandidateContent(candidates, next);
+        int previousFocused = focusedCandidateId(candidates);
+        candidates = next;
         engineAvailable = available;
         privateMode = isPrivate;
+        if (contentChanged) {
+            candidateScroll = 0;
+            candidateStripScroll = 0;
+        }
+        revealFocusedCandidate = contentChanged || previousFocused != focusedCandidateId(candidates);
         candidateScroll = Math.min(candidateScroll, Math.max(0, candidates.size() - 1));
         if (candidates.isEmpty() && candidatesExpanded) {
             candidatesExpanded = false;
@@ -194,22 +211,47 @@ public final class KeyboardView extends View {
             return;
         }
 
+        float left = dp(34);
         float right = getWidth() - dp(36);
-        float x = dp(34);
-        int shown = Math.min(STRIP_CANDIDATE_COUNT, candidates.size());
-        for (int i = 0; i < shown && x < right; i++) {
-            Candidate candidate = candidates.get(i);
-            paint.setTextSize(dp(14));
-            float width = Math.min(right - x, Math.max(dp(58), paint.measureText(candidate.value) + dp(24)));
+        float availableWidth = right - left;
+        float contentWidth = 0;
+        float focusedLeft = -1;
+        float focusedRight = -1;
+        paint.setTextSize(dp(14));
+        for (Candidate candidate : candidates) {
+            float width = candidateWidth(candidate);
+            if (candidate.focused) {
+                focusedLeft = contentWidth;
+                focusedRight = contentWidth + width - dp(4);
+            }
+            contentWidth += width;
+        }
+        contentWidth = Math.max(0, contentWidth - dp(4));
+        candidateStripMaxScroll = Math.max(0, contentWidth - availableWidth);
+        if (revealFocusedCandidate && focusedLeft >= 0) {
+            if (focusedLeft < candidateStripScroll) candidateStripScroll = focusedLeft;
+            else if (focusedRight > candidateStripScroll + availableWidth) {
+                candidateStripScroll = focusedRight - availableWidth;
+            }
+        }
+        revealFocusedCandidate = false;
+        candidateStripScroll = clamp(candidateStripScroll, 0, candidateStripMaxScroll);
+
+        canvas.save();
+        canvas.clipRect(left, 0, right, bar);
+        float x = left - candidateStripScroll;
+        for (Candidate candidate : candidates) {
+            float width = candidateWidth(candidate);
             RectF rect = new RectF(x, dp(4), x + width - dp(4), bar - dp(4));
             paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : Color.argb(120, 68, 68, 92));
             canvas.drawRoundRect(rect, dp(8), dp(8), paint);
             paint.setColor(Color.rgb(225, 225, 238));
             paint.setTextAlign(Paint.Align.CENTER);
             canvas.drawText(candidate.value, rect.centerX(), centeredY(rect.centerY()), paint);
-            candidateHits.add(new CandidateHit(rect, candidate));
+            if (rect.right > left && rect.left < right) candidateHits.add(new CandidateHit(rect, candidate));
             x += width;
         }
+        canvas.restore();
         paint.setColor(Color.rgb(210, 210, 230));
         paint.setTextSize(dp(18));
         canvas.drawText(candidatesExpanded ? "⌃" : "⌄", getWidth() - dp(18), centeredY(bar / 2), paint);
@@ -339,7 +381,8 @@ public final class KeyboardView extends View {
         boolean candidate = candidatePointerId == MotionEvent.INVALID_POINTER_ID
                 && y < candidateAreaHeight() && japanese && !candidates.isEmpty();
         int keyIndex = candidate ? -1 : keyAt(x, y);
-        PointerState state = new PointerState(keyIndex < 0 ? null : keys.get(keyIndex), x, y, candidate);
+        PointerState state = new PointerState(keyIndex < 0 ? null : keys.get(keyIndex), x, y,
+                candidate, candidate && y < dp(CANDIDATE_BAR_DP));
         pointers.put(id, state);
         if (candidate) candidatePointerId = id;
         if (state.key != null && "#del".equals(state.key.value)) {
@@ -372,6 +415,16 @@ public final class KeyboardView extends View {
             float y = event.getY(i);
             if (!state.candidate) {
                 if (Math.abs(x - state.downX) + Math.abs(y - state.downY) > dp(20)) cancelCallbacks(state);
+                continue;
+            }
+            if (state.candidateStrip) {
+                if (Math.abs(x - state.downX) > dp(8)) state.candidateDrag = true;
+                if (state.candidateDrag) {
+                    candidateStripScroll = clamp(
+                            candidateStripScroll - (x - state.candidateX), 0, candidateStripMaxScroll);
+                    state.candidateX = x;
+                    invalidate();
+                }
                 continue;
             }
             if (!candidatesExpanded) continue;
@@ -430,6 +483,7 @@ public final class KeyboardView extends View {
         }
         if (x > getWidth() - dp(38) && y < dp(CANDIDATE_BAR_DP) && !candidates.isEmpty()) {
             candidatesExpanded = !candidatesExpanded;
+            if (candidatesExpanded) candidateScroll = 0;
             requestLayout();
             return;
         }
@@ -553,6 +607,25 @@ public final class KeyboardView extends View {
         return false;
     }
 
+    private float candidateWidth(Candidate candidate) {
+        return Math.max(dp(58), paint.measureText(candidate.value) + dp(24));
+    }
+
+    private boolean sameCandidateContent(List<Candidate> first, List<Candidate> second) {
+        if (first.size() != second.size()) return false;
+        for (int i = 0; i < first.size(); i++) {
+            Candidate a = first.get(i);
+            Candidate b = second.get(i);
+            if (a.id != b.id || !a.value.equals(b.value) || !a.label.equals(b.label)) return false;
+        }
+        return true;
+    }
+
+    private int focusedCandidateId(List<Candidate> source) {
+        for (Candidate candidate : source) if (candidate.focused) return candidate.id;
+        return Integer.MIN_VALUE;
+    }
+
     static DeleteRange backspaceFlick(float dx, float dy, float threshold) {
         if (Math.abs(dx) + Math.abs(dy) <= threshold) return null;
         if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? DeleteRange.ALL : null;
@@ -586,5 +659,6 @@ public final class KeyboardView extends View {
     }
 
     private int clamp(int value, int min, int max) { return Math.max(min, Math.min(max, value)); }
+    private float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
     private int dp(float value) { return (int) (value * getResources().getDisplayMetrics().density + .5f); }
 }

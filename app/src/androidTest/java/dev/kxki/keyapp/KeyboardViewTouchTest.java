@@ -115,6 +115,26 @@ public final class KeyboardViewTouchTest {
         assertEquals(unlocked, colorAt(shift[0], sampleY));
     }
 
+    @Test public void candidateStripScrollsThroughEverySuggestion() {
+        tap(japaneseKeyCenter()[0], japaneseKeyCenter()[1]);
+        List<KeyboardView.Candidate> candidates = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            candidates.add(new KeyboardView.Candidate(i, "候補候補候補", "", false));
+        }
+        onMain(() -> view.setMozcState(candidates, true, false));
+        colorAt(dp(50), dp(20));
+
+        float[] start = {WIDTH / 2f, dp(20)};
+        float[] end = {-WIDTH * 4f, dp(20)};
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{start});
+        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{end});
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{end});
+        colorAt(dp(50), dp(20));
+        tap(WIDTH - dp(56), dp(20));
+
+        assertEquals(29, action.candidateId);
+    }
+
     private void overlap(float[] first, float[] second, int firstReleaseIndex) {
         touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{first});
         touch(pointerAction(MotionEvent.ACTION_POINTER_DOWN, 1),
@@ -182,6 +202,13 @@ public final class KeyboardViewTouchTest {
                 keyboardTop() + dp(100) + dp(21)};
     }
 
+    private float[] japaneseKeyCenter() {
+        float gap = dp(6);
+        float keyWidth = (WIDTH - dp(24) - gap * 4) / 8f;
+        return new float[]{dp(12) + keyWidth + gap + keyWidth / 2f,
+                keyboardTop() + dp(150) + dp(21)};
+    }
+
     private float keyboardTop() { return dp(40) + dp(8); }
 
     private int dp(float value) { return (int) (value * density + .5f); }
@@ -197,6 +224,7 @@ public final class KeyboardViewTouchTest {
     private static final class RecordingAction implements KeyboardView.OnKeyboardAction {
         final List<String> rawTexts = new ArrayList<>();
         int backspaces;
+        int candidateId = -1;
 
         @Override public void onKana(String kana) {}
         @Override public void onKanaModifier() {}
@@ -206,7 +234,7 @@ public final class KeyboardViewTouchTest {
         @Override public void onEnter() {}
         @Override public void onRawText(String text) { rawTexts.add(text); }
         @Override public void onJapaneseChanged(boolean enabled) {}
-        @Override public void onCandidate(int candidateId) {}
+        @Override public void onCandidate(int candidateId) { this.candidateId = candidateId; }
         @Override public void onPrivateModeToggle() {}
     }
 }

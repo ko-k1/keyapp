@@ -404,8 +404,19 @@ final class JapaneseImeController implements AutoCloseable {
             rawKana = "";
             emitFinish(token);
         }
-        candidates = readCandidates(output);
+        if (hasCandidateList(output)) {
+            candidates = readCandidates(output);
+        } else if (!output.hasCandidateWindow()) {
+            candidates = Collections.emptyList();
+        }
+        if (output.hasCandidateWindow()) {
+            candidates = updateCandidateFocus(candidates, output.getCandidateWindow());
+        }
         emitState(token);
+    }
+
+    private boolean hasCandidateList(ProtoCommands.Output output) {
+        return (privateMode && output.hasIncognitoCandidateWords()) || output.hasAllCandidateWords();
     }
 
     private List<Candidate> readCandidates(ProtoCommands.Output output) {
@@ -423,6 +434,30 @@ final class JapaneseImeController implements AutoCloseable {
             String label = word.hasAnnotation() ? word.getAnnotation().getDescription() : "";
             result.add(new Candidate(word.getId(), word.getValue(), label,
                     list.hasFocusedIndex() && list.getFocusedIndex() == i));
+        }
+        return result;
+    }
+
+    private List<Candidate> updateCandidateFocus(
+            List<Candidate> source, ProtoCandidateWindow.CandidateWindow window) {
+        Integer focusedId = null;
+        if (window.hasFocusedIndex()) {
+            for (ProtoCandidateWindow.CandidateWindow.Candidate candidate : window.getCandidateList()) {
+                if (candidate.getIndex() == window.getFocusedIndex() && candidate.hasId()) {
+                    focusedId = candidate.getId();
+                    break;
+                }
+            }
+            if (focusedId == null && window.getFocusedIndex() < window.getCandidateCount()) {
+                ProtoCandidateWindow.CandidateWindow.Candidate focused =
+                        window.getCandidate(window.getFocusedIndex());
+                if (focused.hasId()) focusedId = focused.getId();
+            }
+        }
+        List<Candidate> result = new ArrayList<>(source.size());
+        for (Candidate candidate : source) {
+            result.add(new Candidate(candidate.id, candidate.value, candidate.label,
+                    focusedId != null && candidate.id == focusedId));
         }
         return result;
     }
