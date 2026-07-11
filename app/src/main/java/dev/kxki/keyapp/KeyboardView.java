@@ -165,10 +165,11 @@ public final class KeyboardView extends View {
         drawCandidateArea(canvas);
         for (int i = 0; i < keys.size(); i++) {
             Key key = keys.get(i);
-            boolean pressed = isPressed(key);
-            paint.setColor(pressed ? HIGHLIGHT_COLOR : Color.argb(190, 50, 50, 65));
+            boolean shift = "#shift".equals(key.value);
+            boolean highlighted = shift ? shiftLocked : isPressed(key);
+            paint.setColor(highlighted ? HIGHLIGHT_COLOR : Color.argb(190, 50, 50, 65));
             canvas.drawRoundRect(key.rect, dp(12), dp(12), paint);
-            paint.setColor(pressed ? Color.WHITE : Color.rgb(220, 220, 230));
+            paint.setColor(highlighted ? Color.WHITE : Color.rgb(220, 220, 230));
             paint.setTextAlign(Paint.Align.CENTER);
             paint.setTextSize(dp(key.label.length() > 2 ? 14 : 18));
             canvas.drawText(key.label, key.rect.centerX(), centeredY(key.rect.centerY()), paint);
@@ -261,7 +262,7 @@ public final class KeyboardView extends View {
         if (shifted) {
             addRow(width, top, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"}, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"});
             addRow(width, top + dp(50), new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"}, new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"});
-            addRow(width, top + dp(100), new String[]{shiftLocked ? "⇪" : "⇧", "•", "√", "π", "÷", "×", "°", "¶", "⌫"}, new String[]{"#shift", "•", "√", "π", "÷", "×", "°", "¶", "#del"});
+            addRow(width, top + dp(100), new String[]{"⇪", "•", "√", "π", "÷", "×", "°", "¶", "⌫"}, new String[]{"#shift", "•", "√", "π", "÷", "×", "°", "¶", "#del"});
             addSpaceRow(width, top + dp(150), new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
             return;
         }
@@ -276,7 +277,7 @@ public final class KeyboardView extends View {
         String second = shifted ? "ASDFGHJKL" : "asdfghjkl";
         addRow(width, top, split(first), split("qwertyuiop"));
         addRow(width, top + dp(50), split(second), split("asdfghjkl"));
-        addRow(width, top + dp(100), new String[]{shiftLocked ? "⇪" : "⇧", shifted ? "Z" : "z", shifted ? "X" : "x", shifted ? "C" : "c", shifted ? "V" : "v", shifted ? "B" : "b", shifted ? "N" : "n", shifted ? "M" : "m", "⌫"}, new String[]{"#shift", "z", "x", "c", "v", "b", "n", "m", "#del"});
+        addRow(width, top + dp(100), new String[]{shifted ? "⇪" : "⇧", shifted ? "Z" : "z", shifted ? "X" : "x", shifted ? "C" : "c", shifted ? "V" : "v", shifted ? "B" : "b", shifted ? "N" : "n", shifted ? "M" : "m", "⌫"}, new String[]{"#shift", "z", "x", "c", "v", "b", "n", "m", "#del"});
         addSpaceRow(width, top + dp(150), new String[]{"123", "かな"}, new String[]{"#sym", "#jp"}, "space", " ", new String[]{"clip", "↵"}, new String[]{"#clip", "#enter"});
     }
 

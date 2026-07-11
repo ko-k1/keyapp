@@ -10,6 +10,7 @@ import android.os.SystemClock;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -74,22 +75,44 @@ public final class KeyboardViewTouchTest {
     @Test public void cancelClearsHighlightsAndDelayedCallbacks() throws Exception {
         float[] delete = thirdRowCenter(8);
         float[] shift = thirdRowCenter(0);
+        int shiftIdle = colorAt(shift[0], shift[1] - dp(12));
 
         touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{delete});
         touch(pointerAction(MotionEvent.ACTION_POINTER_DOWN, 1),
                 new int[]{0, 1}, new float[][]{delete, shift});
         int deletePressed = colorAt(delete[0], delete[1] - dp(12));
-        int shiftPressed = colorAt(shift[0], shift[1] - dp(12));
+        assertEquals(shiftIdle, colorAt(shift[0], shift[1] - dp(12)));
 
         touch(MotionEvent.ACTION_CANCEL, new int[]{0, 1}, new float[][]{delete, shift});
         assertNotEquals(deletePressed, colorAt(delete[0], delete[1] - dp(12)));
-        assertNotEquals(shiftPressed, colorAt(shift[0], shift[1] - dp(12)));
 
         Thread.sleep(600);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         assertEquals(0, action.backspaces);
         tap(qCenter()[0], qCenter()[1]);
         assertEquals(Arrays.asList("q"), action.rawTexts);
+    }
+
+    @Test public void shiftHighlightTracksOnlyLongPressLock() throws Exception {
+        float[] shift = thirdRowCenter(0);
+        float sampleY = shift[1] - dp(12);
+        int unlocked = colorAt(shift[0], sampleY);
+
+        tap(shift[0], shift[1]);
+        assertEquals(unlocked, colorAt(shift[0], sampleY));
+        tap(shift[0], shift[1]);
+
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{shift});
+        assertEquals(unlocked, colorAt(shift[0], sampleY));
+        Thread.sleep(ViewConfiguration.getLongPressTimeout() + 100L);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        int locked = colorAt(shift[0], sampleY);
+        assertNotEquals(unlocked, locked);
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{shift});
+        assertEquals(locked, colorAt(shift[0], sampleY));
+
+        tap(shift[0], shift[1]);
+        assertEquals(unlocked, colorAt(shift[0], sampleY));
     }
 
     private void overlap(float[] first, float[] second, int firstReleaseIndex) {
