@@ -1,5 +1,8 @@
 package dev.kxki.keyapp;
 
+import android.content.ClipData;
+import android.content.ClipDescription;
+import android.content.ClipboardManager;
 import android.content.SharedPreferences;
 import android.inputmethodservice.InputMethodService;
 import android.os.Build;
@@ -20,21 +23,34 @@ public final class KeyAppImeService extends InputMethodService
         implements KeyboardView.OnKeyboardAction, JapaneseImeController.Listener {
     static final String PREFERENCES = "keyapp";
     static final String MANUAL_PRIVATE = "manual_private";
+    private static final String CLIPBOARD_COUNT = "clipboard_count";
+    private static final String CLIPBOARD_ITEM = "clipboard_item_";
 
     private JapaneseImeController controller;
     private KeyboardView keyboard;
     private JapaneseImeController.State state;
     private long activeToken;
     private boolean forcedPrivate;
+    private ClipboardManager clipboardManager;
+    private ClipboardManager.OnPrimaryClipChangedListener clipboardListener;
+    private final List<String> clipboardHistory = new ArrayList<>();
 
     @Override public void onCreate() {
         super.onCreate();
         controller = new JapaneseImeController(this, this);
+        loadClipboardHistory();
+        clipboardManager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboardManager != null) {
+            clipboardListener = this::captureClipboard;
+            clipboardManager.addPrimaryClipChangedListener(clipboardListener);
+            captureClipboard();
+        }
     }
 
     @Override public View onCreateInputView() {
         keyboard = new KeyboardView(this);
         keyboard.setAction(this);
+        keyboard.setClipboardHistory(clipboardHistory);
         if (state != null) applyState(state);
         if (Build.VERSION.SDK_INT >= 31) {
             Window window = getWindow().getWindow();
@@ -67,6 +83,9 @@ public final class KeyAppImeService extends InputMethodService
     }
 
     @Override public void onDestroy() {
+        if (clipboardManager != null && clipboardListener != null) {
+            clipboardManager.removePrimaryClipChangedListener(clipboardListener);
+        }
         controller.close();
         super.onDestroy();
     }
@@ -83,6 +102,16 @@ public final class KeyAppImeService extends InputMethodService
     @Override public void onRawText(String text) { controller.rawText(text); }
     @Override public void onJapaneseChanged(boolean enabled) { controller.setJapanese(enabled); }
     @Override public void onCandidate(int candidateId) { controller.selectCandidate(candidateId); }
+
+    @Override public void onClipboardClear() {
+        clipboardHistory.clear();
+        saveClipboardHistory();
+        if (clipboardManager != null) {
+            if (Build.VERSION.SDK_INT >= 28) clipboardManager.clearPrimaryClip();
+            else clipboardManager.setPrimaryClip(ClipData.newPlainText("", ""));
+        }
+        updateClipboardView();
+    }
 
     @Override public void onPrivateModeToggle() {
         SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
@@ -172,6 +201,64 @@ public final class KeyAppImeService extends InputMethodService
 
     private InputConnection connection(long token) {
         return token == activeToken && activeToken != 0 ? getCurrentInputConnection() : null;
+    }
+
+    private void captureClipboard() {
+        if (clipboardManager == null || forcedPrivate || state != null && state.privateMode) return;
+        ClipData clip;
+        try {
+            clip = clipboardManager.getPrimaryClip();
+        } catch (SecurityException ignored) {
+            return;
+        }
+        ClipDescription description = clip == null ? null : clip.getDescription();
+        if (description != null && description.getExtras() != null
+                && description.getExtras().getBoolean(ClipDescription.EXTRA_IS_SENSITIVE)) return;
+        if (clip == null) return;
+        boolean changed = false;
+        for (int i = clip.getItemCount() - 1; i >= 0; i--) {
+            CharSequence value;
+            try {
+                value = clip.getItemAt(i).coerceToText(this);
+            } catch (RuntimeException ignored) {
+                continue;
+            }
+            String text = value == null ? "" : value.toString();
+            if (text.isEmpty()) continue;
+            int previous = clipboardHistory.indexOf(text);
+            if (previous == 0) continue;
+            if (previous > 0) clipboardHistory.remove(previous);
+            clipboardHistory.add(0, text);
+            changed = true;
+        }
+        if (changed) {
+            saveClipboardHistory();
+            updateClipboardView();
+        }
+    }
+
+    private void loadClipboardHistory() {
+        SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
+        int count = preferences.getInt(CLIPBOARD_COUNT, 0);
+        for (int i = 0; i < count; i++) {
+            String value = preferences.getString(CLIPBOARD_ITEM + i, "");
+            if (!value.isEmpty() && !clipboardHistory.contains(value)) clipboardHistory.add(value);
+        }
+    }
+
+    private void saveClipboardHistory() {
+        SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
+        int previous = preferences.getInt(CLIPBOARD_COUNT, 0);
+        SharedPreferences.Editor editor = preferences.edit().putInt(CLIPBOARD_COUNT, clipboardHistory.size());
+        for (int i = 0; i < clipboardHistory.size(); i++) {
+            editor.putString(CLIPBOARD_ITEM + i, clipboardHistory.get(i));
+        }
+        for (int i = clipboardHistory.size(); i < previous; i++) editor.remove(CLIPBOARD_ITEM + i);
+        editor.apply();
+    }
+
+    private void updateClipboardView() {
+        if (keyboard != null) keyboard.setClipboardHistory(clipboardHistory);
     }
 
     private static void sendCursorKeys(

@@ -1,7 +1,5 @@
 package dev.kxki.keyapp;
 
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -36,6 +34,7 @@ public final class KeyboardView extends View {
         void onJapaneseChanged(boolean enabled);
         void onCandidate(int candidateId);
         void onPrivateModeToggle();
+        void onClipboardClear();
     }
 
     public static final class Candidate {
@@ -66,6 +65,7 @@ public final class KeyboardView extends View {
     private OnKeyboardAction action;
     private boolean japanese;
     private boolean clipboard;
+    private int clipboardScroll;
     private boolean shifted;
     private boolean shiftLocked;
     private boolean symbols;
@@ -79,6 +79,7 @@ public final class KeyboardView extends View {
     private int candidatePointerId = MotionEvent.INVALID_POINTER_ID;
     private int cursorPointerId = MotionEvent.INVALID_POINTER_ID;
     private List<Candidate> candidates = Collections.emptyList();
+    private List<String> clipboardHistory = Collections.emptyList();
 
     private static final class Key {
         final RectF rect;
@@ -103,8 +104,10 @@ public final class KeyboardView extends View {
         boolean candidateDrag;
         boolean shiftLongPressed;
         boolean cursorMode;
+        boolean clipboardDrag;
         float cursorX;
         float cursorY;
+        float clipboardY;
         Runnable repeat;
         Runnable shiftLongPress;
         Runnable spaceLongPress;
@@ -119,6 +122,7 @@ public final class KeyboardView extends View {
             this.candidateY = y;
             this.cursorX = x;
             this.cursorY = y;
+            this.clipboardY = y;
         }
     }
 
@@ -146,6 +150,7 @@ public final class KeyboardView extends View {
         cancelPointers();
         japanese = false;
         clipboard = false;
+        clipboardScroll = 0;
         shifted = false;
         shiftLocked = false;
         symbols = false;
@@ -155,6 +160,12 @@ public final class KeyboardView extends View {
         candidateStripMaxScroll = 0;
         candidates = Collections.emptyList();
         requestLayout();
+        invalidate();
+    }
+
+    public void setClipboardHistory(List<String> history) {
+        clipboardHistory = history == null ? Collections.emptyList() : new ArrayList<>(history);
+        clipboardScroll = 0;
         invalidate();
     }
 
@@ -301,7 +312,18 @@ public final class KeyboardView extends View {
         keys.clear();
         float top = candidateAreaHeight() + dp(8);
         if (clipboard) {
-            addRow(width, top, new String[]{"Paste", "Clear", "ABC", "かな"}, new String[]{"#paste", "#clear", "#en", "#jp"});
+            addRow(width, top, new String[]{"Clear", "ABC", "かな"},
+                    new String[]{"#clear", "#en", "#jp"});
+            if (clipboardHistory.isEmpty()) {
+                addRow(width, top + dp(50), new String[]{"Clipboard empty"}, new String[]{""});
+            } else {
+                for (int row = 0; row < 3 && clipboardScroll + row < clipboardHistory.size(); row++) {
+                    int index = clipboardScroll + row;
+                    addRow(width, top + dp(50 * (row + 1)),
+                            new String[]{clipboardLabel(clipboardHistory.get(index))},
+                            new String[]{"#clipboard:" + index});
+                }
+            }
         } else if (symbols) {
             buildSymbols(width, top);
         } else if (japanese) {
@@ -444,6 +466,18 @@ public final class KeyboardView extends View {
                 moveCursor(state, x, y);
                 continue;
             }
+            if (clipboard && state.key != null && state.key.value.startsWith("#clipboard:")) {
+                float delta = y - state.clipboardY;
+                if (Math.abs(y - state.downY) > dp(8)) state.clipboardDrag = true;
+                int steps = (int) (-delta / dp(32));
+                if (steps != 0) {
+                    clipboardScroll = clamp(clipboardScroll + steps, 0,
+                            Math.max(0, clipboardHistory.size() - 3));
+                    state.clipboardY += -steps * dp(32);
+                    invalidate();
+                }
+                continue;
+            }
             if (!state.candidate) {
                 if (Math.abs(x - state.downX) + Math.abs(y - state.downY) > dp(20)) cancelCallbacks(state);
                 state.cursorX = x;
@@ -487,7 +521,8 @@ public final class KeyboardView extends View {
             if (candidatePointerId == id) candidatePointerId = MotionEvent.INVALID_POINTER_ID;
             performClick();
             handleCandidateTouch(x, y, state.candidateDrag);
-        } else if (state.key != null && !(state.shiftLongPressed && "#shift".equals(state.key.value))) {
+        } else if (!state.clipboardDrag && state.key != null
+                && !(state.shiftLongPressed && "#shift".equals(state.key.value))) {
             performClick();
             handle(state.key, x - state.downX, y - state.downY);
         }
@@ -582,14 +617,22 @@ public final class KeyboardView extends View {
                 japanese = true;
                 invalidate();
                 return;
-            case "#clip": clipboard = !clipboard; invalidate(); return;
-            case "#paste": pasteClipboard(); return;
-            case "#clear": clipboard = false; invalidate(); return;
+            case "#clip":
+                clipboard = !clipboard;
+                clipboardScroll = 0;
+                invalidate();
+                return;
+            case "#clear": action.onClipboardClear(); return;
             case "#small":
                 action.onKanaModifier();
                 return;
             default:
                 break;
+        }
+        if (value.startsWith("#clipboard:")) {
+            int index = Integer.parseInt(value.substring("#clipboard:".length()));
+            if (index < clipboardHistory.size()) action.onRawText(clipboardHistory.get(index));
+            return;
         }
         if (value.isEmpty()) return;
         if (japanese && !symbols && value.length() == 1 && !" ".equals(value)) {
@@ -605,13 +648,10 @@ public final class KeyboardView extends View {
         }
     }
 
-    private void pasteClipboard() {
-        ClipboardManager manager = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
-        ClipData clip = manager == null ? null : manager.getPrimaryClip();
-        if (clip != null && clip.getItemCount() > 0 && action != null) {
-            CharSequence text = clip.getItemAt(0).coerceToText(getContext());
-            if (text != null) action.onRawText(text.toString());
-        }
+    private String clipboardLabel(String value) {
+        String text = value.replace('\n', ' ').replace('\r', ' ').trim();
+        int count = text.codePointCount(0, text.length());
+        return count <= 24 ? text : text.substring(0, text.offsetByCodePoints(0, 24)) + "…";
     }
 
     private int keyAt(float x, float y) {

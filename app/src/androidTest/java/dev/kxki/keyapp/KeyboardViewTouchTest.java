@@ -169,6 +169,24 @@ public final class KeyboardViewTouchTest {
         assertEquals(0, action.cursorMoves.size());
     }
 
+    @Test public void clipboardHistoryPastesScrollsAndClears() {
+        onMain(() -> view.setClipboardHistory(
+                Arrays.asList("one", "two", "three", "four", "five")));
+        tap(qwertyClipboardCenter()[0], qwertyClipboardCenter()[1]);
+        tap(WIDTH / 2f, keyboardTop() + dp(50) + dp(21));
+
+        float[] start = {WIDTH / 2f, keyboardTop() + dp(150) + dp(21)};
+        float[] end = {WIDTH / 2f, keyboardTop() + dp(50) + dp(21)};
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{start});
+        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{end});
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{end});
+        tap(WIDTH / 2f, keyboardTop() + dp(150) + dp(21));
+
+        assertEquals(Arrays.asList("one", "five"), action.rawTexts);
+        tap(clipboardControlCenter(0)[0], clipboardControlCenter(0)[1]);
+        assertEquals(1, action.clipboardClears);
+    }
+
     private void overlap(float[] first, float[] second, int firstReleaseIndex) {
         touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{first});
         touch(pointerAction(MotionEvent.ACTION_POINTER_DOWN, 1),
@@ -257,6 +275,20 @@ public final class KeyboardViewTouchTest {
                 keyboardTop() + dp(50) + dp(21)};
     }
 
+    private float[] qwertyClipboardCenter() {
+        float gap = dp(6);
+        float keyWidth = (WIDTH - dp(24) - gap * 4) / 8f;
+        return new float[]{dp(12) + keyWidth * 6.5f + gap * 3,
+                keyboardTop() + dp(150) + dp(21)};
+    }
+
+    private float[] clipboardControlCenter(int index) {
+        float gap = dp(6);
+        float keyWidth = (WIDTH - dp(24) - gap * 2) / 3f;
+        return new float[]{dp(12) + index * (keyWidth + gap) + keyWidth / 2f,
+                keyboardTop() + dp(21)};
+    }
+
     private float keyboardTop() { return dp(40) + dp(8); }
 
     private int dp(float value) { return (int) (value * density + .5f); }
@@ -275,6 +307,7 @@ public final class KeyboardViewTouchTest {
         final List<String> cursorMoves = new ArrayList<>();
         int backspaces;
         int candidateId = -1;
+        int clipboardClears;
 
         @Override public void onKana(String kana) {}
         @Override public void onKanaModifier() {}
@@ -289,5 +322,6 @@ public final class KeyboardViewTouchTest {
         @Override public void onJapaneseChanged(boolean enabled) {}
         @Override public void onCandidate(int candidateId) { this.candidateId = candidateId; }
         @Override public void onPrivateModeToggle() {}
+        @Override public void onClipboardClear() { clipboardClears++; }
     }
 }
