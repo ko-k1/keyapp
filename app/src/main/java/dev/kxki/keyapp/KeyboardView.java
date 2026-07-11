@@ -10,6 +10,7 @@ import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.SparseArray;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
@@ -29,6 +30,7 @@ public final class KeyboardView extends View {
         void onBackspace(boolean japanese);
         void onDeleteRange(DeleteRange range);
         void onSpace(boolean japanese);
+        void onCursorMove(int horizontal, int vertical);
         void onEnter();
         void onRawText(String text);
         void onJapaneseChanged(boolean enabled);
@@ -53,6 +55,7 @@ public final class KeyboardView extends View {
     private static final float NORMAL_HEIGHT_DP = 300f;
     private static final float CANDIDATE_BAR_DP = 40f;
     private static final float EXPANDED_CANDIDATES_DP = 116f;
+    private static final float CURSOR_STEP_DP = 12f;
     private static final int HIGHLIGHT_COLOR = 0xff50506e;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -74,6 +77,7 @@ public final class KeyboardView extends View {
     private float candidateStripMaxScroll;
     private boolean revealFocusedCandidate;
     private int candidatePointerId = MotionEvent.INVALID_POINTER_ID;
+    private int cursorPointerId = MotionEvent.INVALID_POINTER_ID;
     private List<Candidate> candidates = Collections.emptyList();
 
     private static final class Key {
@@ -98,8 +102,12 @@ public final class KeyboardView extends View {
         float candidateY;
         boolean candidateDrag;
         boolean shiftLongPressed;
+        boolean cursorMode;
+        float cursorX;
+        float cursorY;
         Runnable repeat;
         Runnable shiftLongPress;
+        Runnable spaceLongPress;
 
         PointerState(Key key, float x, float y, boolean candidate, boolean candidateStrip) {
             this.key = key;
@@ -109,6 +117,8 @@ public final class KeyboardView extends View {
             this.candidateStrip = candidateStrip;
             this.candidateX = x;
             this.candidateY = y;
+            this.cursorX = x;
+            this.cursorY = y;
         }
     }
 
@@ -188,8 +198,9 @@ public final class KeyboardView extends View {
             canvas.drawRoundRect(key.rect, dp(12), dp(12), paint);
             paint.setColor(highlighted ? Color.WHITE : Color.rgb(220, 220, 230));
             paint.setTextAlign(Paint.Align.CENTER);
-            paint.setTextSize(dp(key.label.length() > 2 ? 14 : 18));
-            canvas.drawText(key.label, key.rect.centerX(), centeredY(key.rect.centerY()), paint);
+            String label = cursorPointerId == MotionEvent.INVALID_POINTER_ID ? key.label : "";
+            paint.setTextSize(dp(label.length() > 2 ? 14 : 18));
+            canvas.drawText(label, key.rect.centerX(), centeredY(key.rect.centerY()), paint);
         }
     }
 
@@ -375,6 +386,7 @@ public final class KeyboardView extends View {
     }
 
     private void startPointer(MotionEvent event, int index) {
+        if (cursorPointerId != MotionEvent.INVALID_POINTER_ID) return;
         int id = event.getPointerId(index);
         float x = event.getX(index);
         float y = event.getY(index);
@@ -403,6 +415,21 @@ public final class KeyboardView extends View {
                 invalidate();
             };
             repeatHandler.postDelayed(state.shiftLongPress, ViewConfiguration.getLongPressTimeout());
+        } else if (state.key != null && " ".equals(state.key.value)) {
+            state.spaceLongPress = () -> {
+                if (pointers.get(id) != state) return;
+                for (int i = pointers.size() - 1; i >= 0; i--) {
+                    if (pointers.valueAt(i) == state) continue;
+                    cancelCallbacks(pointers.valueAt(i));
+                    pointers.removeAt(i);
+                }
+                candidatePointerId = MotionEvent.INVALID_POINTER_ID;
+                cursorPointerId = id;
+                state.cursorMode = true;
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                invalidate();
+            };
+            repeatHandler.postDelayed(state.spaceLongPress, ViewConfiguration.getLongPressTimeout());
         }
         invalidate();
     }
@@ -413,8 +440,14 @@ public final class KeyboardView extends View {
             if (state == null) continue;
             float x = event.getX(i);
             float y = event.getY(i);
+            if (state.cursorMode) {
+                moveCursor(state, x, y);
+                continue;
+            }
             if (!state.candidate) {
                 if (Math.abs(x - state.downX) + Math.abs(y - state.downY) > dp(20)) cancelCallbacks(state);
+                state.cursorX = x;
+                state.cursorY = y;
                 continue;
             }
             if (state.candidateStrip) {
@@ -447,7 +480,10 @@ public final class KeyboardView extends View {
         float y = event.getY(index);
         cancelCallbacks(state);
         pointers.remove(id);
-        if (state.candidate) {
+        if (state.cursorMode) {
+            moveCursor(state, x, y);
+            cursorPointerId = MotionEvent.INVALID_POINTER_ID;
+        } else if (state.candidate) {
             if (candidatePointerId == id) candidatePointerId = MotionEvent.INVALID_POINTER_ID;
             performClick();
             handleCandidateTouch(x, y, state.candidateDrag);
@@ -461,13 +497,25 @@ public final class KeyboardView extends View {
     private void cancelCallbacks(PointerState state) {
         if (state.repeat != null) repeatHandler.removeCallbacks(state.repeat);
         if (state.shiftLongPress != null) repeatHandler.removeCallbacks(state.shiftLongPress);
+        if (state.spaceLongPress != null) repeatHandler.removeCallbacks(state.spaceLongPress);
     }
 
     private void cancelPointers() {
         for (int i = 0; i < pointers.size(); i++) cancelCallbacks(pointers.valueAt(i));
         pointers.clear();
         candidatePointerId = MotionEvent.INVALID_POINTER_ID;
+        cursorPointerId = MotionEvent.INVALID_POINTER_ID;
         invalidate();
+    }
+
+    private void moveCursor(PointerState state, float x, float y) {
+        float step = dp(CURSOR_STEP_DP);
+        int horizontal = (int) ((x - state.cursorX) / step);
+        int vertical = (int) ((y - state.cursorY) / step);
+        if (horizontal == 0 && vertical == 0) return;
+        state.cursorX += horizontal * step;
+        state.cursorY += vertical * step;
+        if (action != null) action.onCursorMove(horizontal, vertical);
     }
 
     @Override public boolean performClick() {

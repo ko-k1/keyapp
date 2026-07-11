@@ -35,12 +35,13 @@ final class JapaneseImeController implements AutoCloseable {
     }
 
     interface Listener {
-        void onComposing(long token, String text);
+        void onComposing(long token, String text, int cursor);
         void onCommit(long token, String text);
         void onDeleteBefore(long token, int length);
         void onDeleteRange(long token, KeyboardView.DeleteRange range);
         void onFinishComposing(long token);
         void onEditorAction(long token);
+        void onEditorCursorMove(long token, int horizontal, int vertical);
         void onState(long token, State state);
     }
 
@@ -84,6 +85,8 @@ final class JapaneseImeController implements AutoCloseable {
     private boolean japanese;
     private boolean privateMode;
     private String rawKana = "";
+    private int preeditLength;
+    private int preeditCursor;
     private List<Candidate> candidates = Collections.emptyList();
 
     JapaneseImeController(Context context, Listener listener) {
@@ -115,6 +118,8 @@ final class JapaneseImeController implements AutoCloseable {
             japanese = false;
             privateMode = isPrivate;
             rawKana = "";
+            preeditLength = 0;
+            preeditCursor = 0;
             candidates = Collections.emptyList();
             transport.open();
             emitState(token);
@@ -153,9 +158,11 @@ final class JapaneseImeController implements AutoCloseable {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || !japanese || kana.isEmpty()) return;
-            rawKana += kana;
+            rawKana = insertCodePoints(rawKana, preeditCursor, kana);
+            preeditCursor += codePointLength(kana);
+            preeditLength += codePointLength(kana);
             if (!ensureSession(token)) {
-                emitComposing(token, rawKana);
+                emitComposing(token, rawKana, preeditCursor);
                 emitState(token);
                 return;
             }
@@ -172,15 +179,16 @@ final class JapaneseImeController implements AutoCloseable {
     void modifyKana() {
         long token = currentToken.get();
         serial.execute(() -> {
-            if (!isCurrent(token) || !japanese || rawKana.isEmpty()) return;
-            String changed = transformLast(rawKana);
+            if (!isCurrent(token) || !japanese || rawKana.isEmpty() || preeditCursor == 0) return;
+            String changed = transformBeforeCursor(rawKana, preeditCursor);
             if (changed.equals(rawKana)) return;
             rawKana = changed;
             if (!ensureSession(token)) {
-                emitComposing(token, rawKana);
+                emitComposing(token, rawKana, preeditCursor);
                 emitState(token);
                 return;
             }
+            int cursor = preeditCursor;
             ProtoCommands.SessionCommand.CompositionEvent event =
                     ProtoCommands.SessionCommand.CompositionEvent.newBuilder()
                             .setCompositionString(rawKana)
@@ -190,6 +198,9 @@ final class JapaneseImeController implements AutoCloseable {
                     .setType(ProtoCommands.SessionCommand.CommandType.UPDATE_COMPOSITION)
                     .addCompositionEvents(event)
                     .build()));
+            if (sessionId != 0 && preeditLength > 0 && preeditCursor != cursor) {
+                moveMozcCursor(token, Math.min(cursor, preeditLength));
+            }
         });
     }
 
@@ -207,8 +218,12 @@ final class JapaneseImeController implements AutoCloseable {
                 return;
             }
             if (!ensureSession(token)) {
-                rawKana = removeLastCodePoint(rawKana);
-                if (rawKana.isEmpty()) emitFinish(token); else emitComposing(token, rawKana);
+                if (preeditCursor == 0) return;
+                rawKana = removeCodePointBefore(rawKana, preeditCursor);
+                preeditCursor--;
+                preeditLength--;
+                if (rawKana.isEmpty()) emitFinish(token);
+                else emitComposing(token, rawKana, preeditCursor);
                 emitState(token);
                 return;
             }
@@ -216,6 +231,24 @@ final class JapaneseImeController implements AutoCloseable {
                     .setSpecialKey(ProtoCommands.KeyEvent.SpecialKey.BACKSPACE)
                     .build();
             project(token, evaluate(sessionInput(ProtoCommands.Input.CommandType.SEND_KEY).setKey(key).build()));
+        });
+    }
+
+    void moveCursor(int horizontal, int vertical) {
+        long token = currentToken.get();
+        serial.execute(() -> {
+            if (!isCurrent(token) || (horizontal == 0 && vertical == 0)) return;
+            if (preeditLength == 0) {
+                emitEditorCursorMove(token, horizontal, vertical);
+                return;
+            }
+            int target = clamp(preeditCursor + horizontal, 0, preeditLength);
+            if (target == preeditCursor) return;
+            if (sessionId != 0 && transport.isAvailable()) moveMozcCursor(token, target);
+            else {
+                preeditCursor = target;
+                emitComposing(token, rawKana, preeditCursor);
+            }
         });
     }
 
@@ -295,6 +328,8 @@ final class JapaneseImeController implements AutoCloseable {
             deleteSession();
             japanese = false;
             rawKana = "";
+            preeditLength = 0;
+            preeditCursor = 0;
             candidates = Collections.emptyList();
         });
     }
@@ -343,6 +378,13 @@ final class JapaneseImeController implements AutoCloseable {
                 .build());
     }
 
+    private void moveMozcCursor(long token, int position) {
+        project(token, sendCommand(ProtoCommands.SessionCommand.newBuilder()
+                .setType(ProtoCommands.SessionCommand.CommandType.MOVE_CURSOR)
+                .setCursorPosition(position)
+                .build()));
+    }
+
     private ProtoCommands.Command evaluate(ProtoCommands.Input input) {
         return transport.evaluate(ProtoCommands.Command.newBuilder().setInput(input).build());
     }
@@ -377,7 +419,7 @@ final class JapaneseImeController implements AutoCloseable {
                 || command.getOutput().getErrorCode() != ProtoCommands.Output.ErrorCode.SESSION_SUCCESS) {
             sessionId = 0;
             candidates = Collections.emptyList();
-            emitComposing(token, rawKana);
+            emitComposing(token, rawKana, preeditCursor);
             emitState(token);
             return;
         }
@@ -389,6 +431,8 @@ final class JapaneseImeController implements AutoCloseable {
         if (output.hasResult() && !output.getResult().getValue().isEmpty()) {
             emitCommit(token, output.getResult().getValue());
             rawKana = "";
+            preeditLength = 0;
+            preeditCursor = 0;
         }
 
         if (output.hasPreedit()) {
@@ -399,9 +443,13 @@ final class JapaneseImeController implements AutoCloseable {
                 reading.append(segment.hasKey() ? segment.getKey() : segment.getValue());
             }
             rawKana = reading.toString();
-            emitComposing(token, visible.toString());
+            preeditLength = codePointLength(visible.toString());
+            preeditCursor = clamp(output.getPreedit().getCursor(), 0, preeditLength);
+            emitComposing(token, visible.toString(), preeditCursor);
         } else {
             rawKana = "";
+            preeditLength = 0;
+            preeditCursor = 0;
             emitFinish(token);
         }
         if (hasCandidateList(output)) {
@@ -476,6 +524,8 @@ final class JapaneseImeController implements AutoCloseable {
                         .setType(ProtoCommands.SessionCommand.CommandType.RESET_CONTEXT)
                         .build());
                 rawKana = "";
+                preeditLength = 0;
+                preeditCursor = 0;
                 candidates = Collections.emptyList();
                 emitState(token);
                 return;
@@ -483,6 +533,8 @@ final class JapaneseImeController implements AutoCloseable {
         }
         if (submit && !fallback.isEmpty()) emitCommit(token, fallback); else emitFinish(token);
         rawKana = "";
+        preeditLength = 0;
+        preeditCursor = 0;
         candidates = Collections.emptyList();
         emitState(token);
     }
@@ -504,7 +556,9 @@ final class JapaneseImeController implements AutoCloseable {
         post(token, () -> listener.onState(token, state));
     }
 
-    private void emitComposing(long token, String text) { post(token, () -> listener.onComposing(token, text)); }
+    private void emitComposing(long token, String text, int cursor) {
+        post(token, () -> listener.onComposing(token, text, cursor));
+    }
     private void emitCommit(long token, String text) { post(token, () -> listener.onCommit(token, text)); }
     private void emitDelete(long token, int length) { post(token, () -> listener.onDeleteBefore(token, length)); }
     private void emitDeleteRange(long token, KeyboardView.DeleteRange range) {
@@ -512,11 +566,14 @@ final class JapaneseImeController implements AutoCloseable {
     }
     private void emitFinish(long token) {
         post(token, () -> {
-            listener.onComposing(token, "");
+            listener.onComposing(token, "", 0);
             listener.onFinishComposing(token);
         });
     }
     private void emitEditorAction(long token) { post(token, () -> listener.onEditorAction(token)); }
+    private void emitEditorCursorMove(long token, int horizontal, int vertical) {
+        post(token, () -> listener.onEditorCursorMove(token, horizontal, vertical));
+    }
 
     private void post(long token, Runnable callback) {
         callbacks.execute(() -> {
@@ -538,7 +595,23 @@ final class JapaneseImeController implements AutoCloseable {
         return text;
     }
 
-    private static String removeLastCodePoint(String value) {
-        return value.isEmpty() ? value : value.substring(0, value.offsetByCodePoints(value.length(), -1));
+    private static String transformBeforeCursor(String text, int cursor) {
+        int end = text.offsetByCodePoints(0, clamp(cursor, 0, codePointLength(text)));
+        return transformLast(text.substring(0, end)) + text.substring(end);
     }
+
+    private static String insertCodePoints(String text, int cursor, String inserted) {
+        int offset = text.offsetByCodePoints(0, clamp(cursor, 0, codePointLength(text)));
+        return text.substring(0, offset) + inserted + text.substring(offset);
+    }
+
+    private static String removeCodePointBefore(String text, int cursor) {
+        int end = text.offsetByCodePoints(0, clamp(cursor, 0, codePointLength(text)));
+        if (end == 0) return text;
+        int start = text.offsetByCodePoints(end, -1);
+        return text.substring(0, start) + text.substring(end);
+    }
+
+    private static int codePointLength(String text) { return text.codePointCount(0, text.length()); }
+    private static int clamp(int value, int min, int max) { return Math.max(min, Math.min(max, value)); }
 }

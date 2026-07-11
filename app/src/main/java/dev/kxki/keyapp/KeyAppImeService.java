@@ -3,7 +3,11 @@ package dev.kxki.keyapp;
 import android.content.SharedPreferences;
 import android.inputmethodservice.InputMethodService;
 import android.os.Build;
+import android.os.SystemClock;
 import android.text.InputType;
+import android.view.InputDevice;
+import android.view.KeyCharacterMap;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.inputmethod.EditorInfo;
@@ -72,6 +76,9 @@ public final class KeyAppImeService extends InputMethodService
     @Override public void onBackspace(boolean japanese) { controller.backspace(japanese); }
     @Override public void onDeleteRange(KeyboardView.DeleteRange range) { controller.deleteRange(range); }
     @Override public void onSpace(boolean japanese) { controller.space(japanese); }
+    @Override public void onCursorMove(int horizontal, int vertical) {
+        controller.moveCursor(horizontal, vertical);
+    }
     @Override public void onEnter() { controller.enter(); }
     @Override public void onRawText(String text) { controller.rawText(text); }
     @Override public void onJapaneseChanged(boolean enabled) { controller.setJapanese(enabled); }
@@ -84,9 +91,20 @@ public final class KeyAppImeService extends InputMethodService
         controller.setPrivateMode(forcedPrivate || manual);
     }
 
-    @Override public void onComposing(long token, String text) {
+    @Override public void onComposing(long token, String text, int cursor) {
         InputConnection connection = connection(token);
-        if (connection != null) connection.setComposingText(text, 1);
+        if (connection == null) return;
+        connection.beginBatchEdit();
+        connection.setComposingText(text, 1);
+        if (cursor < text.codePointCount(0, text.length())) {
+            CharSequence before = connection.getTextBeforeCursor(Integer.MAX_VALUE, 0);
+            if (before != null) {
+                int trailing = text.length() - text.offsetByCodePoints(0, cursor);
+                int position = before.length() - trailing;
+                if (position >= 0) connection.setSelection(position, position);
+            }
+        }
+        connection.endBatchEdit();
     }
 
     @Override public void onCommit(long token, String text) {
@@ -129,6 +147,13 @@ public final class KeyAppImeService extends InputMethodService
         }
     }
 
+    @Override public void onEditorCursorMove(long token, int horizontal, int vertical) {
+        InputConnection connection = connection(token);
+        if (connection == null) return;
+        sendCursorKeys(connection, horizontal, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT);
+        sendCursorKeys(connection, vertical, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN);
+    }
+
     @Override public void onState(long token, JapaneseImeController.State next) {
         if (token != activeToken || activeToken == 0) return;
         state = next;
@@ -147,6 +172,20 @@ public final class KeyAppImeService extends InputMethodService
 
     private InputConnection connection(long token) {
         return token == activeToken && activeToken != 0 ? getCurrentInputConnection() : null;
+    }
+
+    private static void sendCursorKeys(
+            InputConnection connection, int movement, int negativeKey, int positiveKey) {
+        int keyCode = movement < 0 ? negativeKey : positiveKey;
+        for (int i = 0; i < Math.abs(movement); i++) {
+            long time = SystemClock.uptimeMillis();
+            connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_DOWN, keyCode, 0, 0,
+                    KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_SOFT_KEYBOARD,
+                    InputDevice.SOURCE_KEYBOARD));
+            connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_UP, keyCode, 0, 0,
+                    KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_SOFT_KEYBOARD,
+                    InputDevice.SOURCE_KEYBOARD));
+        }
     }
 
     private static boolean isSensitive(EditorInfo info) {

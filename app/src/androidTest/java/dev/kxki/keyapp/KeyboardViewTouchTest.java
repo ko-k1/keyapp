@@ -135,6 +135,40 @@ public final class KeyboardViewTouchTest {
         assertEquals(29, action.candidateId);
     }
 
+    @Test public void shortTapSpaceWorksInQwertyAndJapanese() {
+        tap(qwertySpaceCenter()[0], qwertySpaceCenter()[1]);
+        tap(japaneseKeyCenter()[0], japaneseKeyCenter()[1]);
+        tap(japaneseSpaceCenter()[0], japaneseSpaceCenter()[1]);
+
+        assertEquals(Arrays.asList(false, true), action.spaces);
+    }
+
+    @Test public void longPressSpaceMovesOnBothAxesAndDoesNotTypeSpace() throws Exception {
+        float[] space = qwertySpaceCenter();
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{space});
+        Thread.sleep(ViewConfiguration.getLongPressTimeout() + 100L);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        float[] moved = {space[0] + dp(25), space[1] - dp(13)};
+        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{moved});
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{moved});
+
+        assertEquals(Arrays.asList("2,-1"), action.cursorMoves);
+        assertEquals(0, action.spaces.size());
+    }
+
+    @Test public void japaneseCursorModeCancelsAndRestoresKeyboard() throws Exception {
+        tap(japaneseKeyCenter()[0], japaneseKeyCenter()[1]);
+        float[] space = japaneseSpaceCenter();
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{space});
+        Thread.sleep(ViewConfiguration.getLongPressTimeout() + 100L);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        touch(MotionEvent.ACTION_CANCEL, new int[]{0}, new float[][]{space});
+        tap(space[0], space[1]);
+
+        assertEquals(Arrays.asList(true), action.spaces);
+        assertEquals(0, action.cursorMoves.size());
+    }
+
     private void overlap(float[] first, float[] second, int firstReleaseIndex) {
         touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{first});
         touch(pointerAction(MotionEvent.ACTION_POINTER_DOWN, 1),
@@ -209,6 +243,20 @@ public final class KeyboardViewTouchTest {
                 keyboardTop() + dp(150) + dp(21)};
     }
 
+    private float[] qwertySpaceCenter() {
+        float gap = dp(6);
+        float keyWidth = (WIDTH - dp(24) - gap * 4) / 8f;
+        return new float[]{dp(12) + 2 * (keyWidth + gap) + keyWidth * 2,
+                keyboardTop() + dp(150) + dp(21)};
+    }
+
+    private float[] japaneseSpaceCenter() {
+        float gap = dp(6);
+        float keyWidth = (WIDTH - dp(24) - gap * 4) / 5f;
+        return new float[]{dp(12) + 4 * (keyWidth + gap) + keyWidth / 2f,
+                keyboardTop() + dp(50) + dp(21)};
+    }
+
     private float keyboardTop() { return dp(40) + dp(8); }
 
     private int dp(float value) { return (int) (value * density + .5f); }
@@ -223,6 +271,8 @@ public final class KeyboardViewTouchTest {
 
     private static final class RecordingAction implements KeyboardView.OnKeyboardAction {
         final List<String> rawTexts = new ArrayList<>();
+        final List<Boolean> spaces = new ArrayList<>();
+        final List<String> cursorMoves = new ArrayList<>();
         int backspaces;
         int candidateId = -1;
 
@@ -230,7 +280,10 @@ public final class KeyboardViewTouchTest {
         @Override public void onKanaModifier() {}
         @Override public void onBackspace(boolean japanese) { backspaces++; }
         @Override public void onDeleteRange(KeyboardView.DeleteRange range) {}
-        @Override public void onSpace(boolean japanese) {}
+        @Override public void onSpace(boolean japanese) { spaces.add(japanese); }
+        @Override public void onCursorMove(int horizontal, int vertical) {
+            cursorMoves.add(horizontal + "," + vertical);
+        }
         @Override public void onEnter() {}
         @Override public void onRawText(String text) { rawTexts.add(text); }
         @Override public void onJapaneseChanged(boolean enabled) {}

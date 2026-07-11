@@ -106,10 +106,84 @@ public final class JapaneseImeControllerTest {
         assertEquals(null, KeyboardView.backspaceFlick(0, 0, 20));
     }
 
+    @Test public void cursorMovementEditsMozcPreeditAtTheNewPosition() {
+        FakeTransport transport = new FakeTransport();
+        transport.cursorEditing = true;
+        RecordingListener listener = new RecordingListener();
+        JapaneseImeController controller =
+                new JapaneseImeController(transport, listener, Runnable::run, Runnable::run);
+
+        controller.begin(false);
+        controller.setJapanese(true);
+        controller.kana("かな");
+        controller.moveCursor(-1, 0);
+        assertEquals(1, transport.lastMoveCursor());
+        assertEquals(1, listener.composingCursor);
+
+        controller.kana("さ");
+        assertEquals("かさな", listener.composing);
+        assertEquals(2, listener.composingCursor);
+        controller.backspace(true);
+        assertEquals("かな", listener.composing);
+        assertEquals(1, listener.composingCursor);
+        controller.modifyKana();
+        assertEquals("ゕな", listener.composing);
+        assertEquals(1, listener.composingCursor);
+    }
+
+    @Test public void compositionLocksHorizontalMovementAndIgnoresVerticalMovement() {
+        FakeTransport transport = new FakeTransport();
+        transport.cursorEditing = true;
+        RecordingListener listener = new RecordingListener();
+        JapaneseImeController controller =
+                new JapaneseImeController(transport, listener, Runnable::run, Runnable::run);
+
+        controller.begin(false);
+        controller.setJapanese(true);
+        controller.kana("かな");
+        controller.moveCursor(-5, -1);
+        assertEquals(0, transport.lastMoveCursor());
+        assertEquals("", listener.committed);
+        assertEquals(0, listener.editorHorizontal);
+        assertEquals(0, listener.editorVertical);
+
+        controller.moveCursor(0, -1);
+        controller.kana("さ");
+        assertEquals("さかな", listener.composing);
+        assertEquals(1, listener.composingCursor);
+    }
+
+    @Test public void unavailableEngineEditsFallbackKanaAtItsCursor() {
+        FakeTransport transport = new FakeTransport();
+        transport.available = false;
+        RecordingListener listener = new RecordingListener();
+        JapaneseImeController controller =
+                new JapaneseImeController(transport, listener, Runnable::run, Runnable::run);
+
+        controller.begin(false);
+        controller.setJapanese(true);
+        controller.kana("かな");
+        controller.moveCursor(-1, 0);
+        controller.kana("さ");
+        controller.modifyKana();
+        assertEquals("かざな", listener.composing);
+        assertEquals(2, listener.composingCursor);
+        controller.backspace(true);
+        assertEquals("かな", listener.composing);
+        assertEquals(1, listener.composingCursor);
+        controller.moveCursor(-5, 1);
+        controller.kana("さ");
+        assertEquals("さかな", listener.composing);
+        assertEquals(1, listener.composingCursor);
+    }
+
     private static final class FakeTransport implements JapaneseImeController.Transport {
         final List<ProtoCommands.Input> inputs = new ArrayList<>();
         boolean available = true;
         boolean deleteOnBackspace;
+        boolean cursorEditing;
+        String preedit = "";
+        int preeditCursor;
         int selectedCandidateId = -1;
 
         @Override public boolean open() { return available; }
@@ -123,6 +197,39 @@ public final class JapaneseImeControllerTest {
             ProtoCommands.Output.Builder output = ProtoCommands.Output.newBuilder();
             if (input.getType() == ProtoCommands.Input.CommandType.CREATE_SESSION) {
                 output.setId(7);
+            } else if (cursorEditing && input.getType() == ProtoCommands.Input.CommandType.SEND_COMMAND
+                    && input.getCommand().getType()
+                    == ProtoCommands.SessionCommand.CommandType.MOVE_CURSOR) {
+                preeditCursor = input.getCommand().getCursorPosition();
+                setPreedit(output);
+            } else if (cursorEditing && input.getType() == ProtoCommands.Input.CommandType.SEND_COMMAND
+                    && input.getCommand().getType()
+                    == ProtoCommands.SessionCommand.CommandType.UPDATE_COMPOSITION) {
+                preedit = input.getCommand().getCompositionEvents(0).getCompositionString();
+                preeditCursor = preedit.codePointCount(0, preedit.length());
+                setPreedit(output);
+            } else if (cursorEditing && input.getType() == ProtoCommands.Input.CommandType.SEND_COMMAND
+                    && input.getCommand().getType()
+                    == ProtoCommands.SessionCommand.CommandType.SUBMIT) {
+                output.setResult(ProtoCommands.Result.newBuilder()
+                        .setType(ProtoCommands.Result.ResultType.STRING).setValue(preedit));
+                preedit = "";
+                preeditCursor = 0;
+            } else if (cursorEditing && input.getType() == ProtoCommands.Input.CommandType.SEND_KEY
+                    && !input.getKey().hasSpecialKey()) {
+                preedit = insert(preedit, preeditCursor, input.getKey().getKeyString());
+                preeditCursor += input.getKey().getKeyString().codePointCount(
+                        0, input.getKey().getKeyString().length());
+                setPreedit(output);
+            } else if (cursorEditing && input.getType() == ProtoCommands.Input.CommandType.SEND_KEY
+                    && input.getKey().getSpecialKey() == ProtoCommands.KeyEvent.SpecialKey.BACKSPACE) {
+                if (preeditCursor > 0) {
+                    int end = preedit.offsetByCodePoints(0, preeditCursor);
+                    int start = preedit.offsetByCodePoints(end, -1);
+                    preedit = preedit.substring(0, start) + preedit.substring(end);
+                    preeditCursor--;
+                }
+                setPreedit(output);
             } else if (input.getType() == ProtoCommands.Input.CommandType.SEND_KEY
                     && input.getKey().getSpecialKey() == ProtoCommands.KeyEvent.SpecialKey.BACKSPACE
                     && deleteOnBackspace) {
@@ -166,6 +273,32 @@ public final class JapaneseImeControllerTest {
             return ProtoCommands.Command.newBuilder().setInput(input).setOutput(output).build();
         }
 
+        private void setPreedit(ProtoCommands.Output.Builder output) {
+            if (preedit.isEmpty()) return;
+            output.setPreedit(ProtoCommands.Preedit.newBuilder().setCursor(preeditCursor)
+                    .addSegment(ProtoCommands.Preedit.Segment.newBuilder()
+                            .setAnnotation(ProtoCommands.Preedit.Segment.Annotation.UNDERLINE)
+                            .setValue(preedit).setValueLength(preedit.codePointCount(0, preedit.length()))
+                            .setKey(preedit)));
+        }
+
+        private static String insert(String text, int cursor, String value) {
+            int offset = text.offsetByCodePoints(0, cursor);
+            return text.substring(0, offset) + value + text.substring(offset);
+        }
+
+        int lastMoveCursor() {
+            for (int i = inputs.size() - 1; i >= 0; i--) {
+                ProtoCommands.Input input = inputs.get(i);
+                if (input.getType() == ProtoCommands.Input.CommandType.SEND_COMMAND
+                        && input.getCommand().getType()
+                        == ProtoCommands.SessionCommand.CommandType.MOVE_CURSOR) {
+                    return input.getCommand().getCursorPosition();
+                }
+            }
+            throw new AssertionError("Missing MOVE_CURSOR");
+        }
+
         ProtoCommands.Input last(ProtoCommands.Input.CommandType type) {
             for (int i = inputs.size() - 1; i >= 0; i--) {
                 if (inputs.get(i).getType() == type) return inputs.get(i);
@@ -178,16 +311,26 @@ public final class JapaneseImeControllerTest {
         String composing = "";
         String committed = "";
         int deleted;
+        int composingCursor;
+        int editorHorizontal;
+        int editorVertical;
         boolean editorAction;
         boolean finished;
         JapaneseImeController.State state;
 
-        @Override public void onComposing(long token, String text) { composing = text; }
+        @Override public void onComposing(long token, String text, int cursor) {
+            composing = text;
+            composingCursor = cursor;
+        }
         @Override public void onCommit(long token, String text) { committed += text; }
         @Override public void onDeleteBefore(long token, int length) { deleted += length; }
         @Override public void onDeleteRange(long token, KeyboardView.DeleteRange range) {}
         @Override public void onFinishComposing(long token) { finished = true; }
         @Override public void onEditorAction(long token) { editorAction = true; }
+        @Override public void onEditorCursorMove(long token, int horizontal, int vertical) {
+            editorHorizontal = horizontal;
+            editorVertical = vertical;
+        }
         @Override public void onState(long token, JapaneseImeController.State next) { state = next; }
     }
 }
