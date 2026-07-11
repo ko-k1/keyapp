@@ -4,6 +4,8 @@ import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.ClipboardManager;
 import android.content.SharedPreferences;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.inputmethodservice.InputMethodService;
 import android.os.Build;
 import android.os.SystemClock;
@@ -51,13 +53,20 @@ public final class KeyAppImeService extends InputMethodService
         keyboard = new KeyboardView(this);
         keyboard.setAction(this);
         keyboard.setClipboardHistory(clipboardHistory);
+        loadKeyboardSize();
         if (state != null) applyState(state);
+        Window window = getWindow().getWindow();
+        window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        window.getDecorView().setBackgroundColor(Color.TRANSPARENT);
         if (Build.VERSION.SDK_INT >= 31) {
-            Window window = getWindow().getWindow();
             window.setBackgroundBlurRadius(30);
-            window.getDecorView().setBackgroundColor(android.graphics.Color.TRANSPARENT);
         }
         return keyboard;
+    }
+
+    @Override public void onWindowShown() {
+        super.onWindowShown();
+        loadKeyboardSize();
     }
 
     @Override public void onStartInput(EditorInfo attribute, boolean restarting) {
@@ -259,6 +268,14 @@ public final class KeyAppImeService extends InputMethodService
 
     private void updateClipboardView() {
         if (keyboard != null) keyboard.setClipboardHistory(clipboardHistory);
+    }
+
+    private void loadKeyboardSize() {
+        if (keyboard != null) keyboard.setKeyboardFrame(
+                KeyboardResizeActivity.loadWidth(this),
+                KeyboardResizeActivity.loadHeight(this),
+                KeyboardResizeActivity.loadLeft(this),
+                KeyboardResizeActivity.loadBottomGap(this));
     }
 
     private static void sendCursorKeys(

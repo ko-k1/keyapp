@@ -52,6 +52,9 @@ public final class KeyboardView extends View {
     }
 
     private static final float NORMAL_HEIGHT_DP = 300f;
+    private static final int MIN_HEIGHT_DP = 220;
+    private static final int MAX_HEIGHT_DP = 420;
+    private static final int MIN_WIDTH_DP = 280;
     private static final float CANDIDATE_BAR_DP = 40f;
     private static final float EXPANDED_CANDIDATES_DP = 116f;
     private static final float CURSOR_STEP_DP = 12f;
@@ -80,6 +83,28 @@ public final class KeyboardView extends View {
     private int cursorPointerId = MotionEvent.INVALID_POINTER_ID;
     private List<Candidate> candidates = Collections.emptyList();
     private List<String> clipboardHistory = Collections.emptyList();
+    private int keyboardHeightDp = (int) NORMAL_HEIGHT_DP;
+    private int keyboardWidthDp = Integer.MAX_VALUE;
+    private int keyboardLeftDp;
+    private int bottomGapDp;
+    private int availableHeightDp = Integer.MAX_VALUE;
+    private int availableWidthDp = Integer.MAX_VALUE;
+    private int measuredBottomGapDp;
+    private boolean resizeMode;
+    private int resizePointerId = MotionEvent.INVALID_POINTER_ID;
+    private int resizeEdges;
+    private float resizeDownRawX;
+    private float resizeDownRawY;
+    private int resizeStartWidthDp;
+    private int resizeStartHeightDp;
+    private int resizeStartLeftDp;
+    private int resizeStartGapDp;
+
+    private static final int RESIZE_LEFT = 1;
+    private static final int RESIZE_TOP = 2;
+    private static final int RESIZE_RIGHT = 4;
+    private static final int RESIZE_BOTTOM = 8;
+    private static final int RESIZE_MOVE = 16;
 
     private static final class Key {
         final RectF rect;
@@ -146,6 +171,28 @@ public final class KeyboardView extends View {
         this.action = action;
     }
 
+    void setKeyboardFrame(int widthDp, int heightDp, int leftDp, int gapDp) {
+        keyboardWidthDp = Math.max(1, widthDp);
+        keyboardHeightDp = clamp(heightDp, MIN_HEIGHT_DP, MAX_HEIGHT_DP);
+        keyboardLeftDp = Math.max(0, leftDp);
+        bottomGapDp = Math.max(0, gapDp);
+        constrainFrame();
+        requestLayout();
+        invalidate();
+    }
+
+    int getKeyboardWidthDp() { return keyboardWidthDp; }
+    int getKeyboardHeightDp() { return keyboardHeightDp; }
+    int getKeyboardLeftDp() { return keyboardLeftDp; }
+    int getKeyboardBottomGapDp() { return bottomGapDp; }
+
+    void setResizeMode(boolean enabled) {
+        resizeMode = enabled;
+        cancelPointers();
+        resizePointerId = MotionEvent.INVALID_POINTER_ID;
+        invalidate();
+    }
+
     public void resetForInput() {
         cancelPointers();
         japanese = false;
@@ -191,13 +238,25 @@ public final class KeyboardView extends View {
     }
 
     @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int height = dp(NORMAL_HEIGHT_DP + (candidatesExpanded ? EXPANDED_CANDIDATES_DP : 0));
-        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), height);
+        availableWidthDp = MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED
+                ? Integer.MAX_VALUE
+                : pxToDp(MeasureSpec.getSize(widthMeasureSpec));
+        availableHeightDp = MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED
+                ? Integer.MAX_VALUE
+                : pxToDp(MeasureSpec.getSize(heightMeasureSpec));
+        constrainFrame();
+        measuredBottomGapDp = bottomGapDp;
+        if (availableHeightDp != Integer.MAX_VALUE) {
+            measuredBottomGapDp = Math.min(measuredBottomGapDp,
+                    Math.max(0, availableHeightDp - pxToDp(keyboardBoundary())));
+        }
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec),
+                keyboardBoundary() + dp(measuredBottomGapDp));
     }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        buildKeys(getWidth());
+        buildKeys();
         paint.setColor(Color.argb(160, 30, 30, 40));
         canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
         drawCandidateArea(canvas);
@@ -213,6 +272,28 @@ public final class KeyboardView extends View {
             paint.setTextSize(dp(label.length() > 2 ? 14 : 18));
             canvas.drawText(label, key.rect.centerX(), centeredY(key.rect.centerY()), paint);
         }
+        if (resizeMode) drawResizeHandles(canvas);
+    }
+
+    private void drawResizeHandles(Canvas canvas) {
+        float left = keyboardLeft();
+        float right = keyboardRight();
+        float bottom = keyboardBoundary();
+        float inset = dp(3);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(dp(2));
+        paint.setColor(Color.argb(235, 230, 230, 240));
+        canvas.drawRect(left + inset, inset, right - inset, bottom - inset, paint);
+        paint.setStyle(Paint.Style.FILL);
+        float radius = dp(6);
+        float[] xs = {left + radius, (left + right) / 2f, right - radius};
+        float[] ys = {radius, bottom / 2f, bottom - radius};
+        for (float x : xs) {
+            canvas.drawCircle(x, ys[0], radius, paint);
+            canvas.drawCircle(x, ys[2], radius, paint);
+        }
+        canvas.drawCircle(xs[0], ys[1], radius, paint);
+        canvas.drawCircle(xs[2], ys[1], radius, paint);
     }
 
     private void drawCandidateArea(Canvas canvas) {
@@ -223,18 +304,20 @@ public final class KeyboardView extends View {
         paint.setTextAlign(Paint.Align.CENTER);
         paint.setTextSize(dp(12));
         paint.setColor(privateMode ? Color.rgb(255, 204, 110) : Color.rgb(180, 190, 210));
-        canvas.drawText(privateMode ? "P" : "p", dp(17), centeredY(bar / 2), paint);
+        canvas.drawText(privateMode ? "P" : "p", keyboardLeft() + dp(17),
+                centeredY(bar / 2), paint);
 
         if (!engineAvailable) {
             paint.setTextAlign(Paint.Align.LEFT);
             paint.setColor(Color.rgb(255, 194, 120));
             paint.setTextSize(dp(13));
-            canvas.drawText("Kana only · Mozc unavailable", dp(36), centeredY(bar / 2), paint);
+            canvas.drawText("Kana only · Mozc unavailable", keyboardLeft() + dp(36),
+                    centeredY(bar / 2), paint);
             return;
         }
 
-        float left = dp(34);
-        float right = getWidth() - dp(36);
+        float left = keyboardLeft() + dp(34);
+        float right = keyboardRight() - dp(36);
         float availableWidth = right - left;
         float contentWidth = 0;
         float focusedLeft = -1;
@@ -276,7 +359,8 @@ public final class KeyboardView extends View {
         canvas.restore();
         paint.setColor(Color.rgb(210, 210, 230));
         paint.setTextSize(dp(18));
-        canvas.drawText(candidatesExpanded ? "⌃" : "⌄", getWidth() - dp(18), centeredY(bar / 2), paint);
+        canvas.drawText(candidatesExpanded ? "⌃" : "⌄", keyboardRight() - dp(18),
+                centeredY(bar / 2), paint);
 
         if (!candidatesExpanded) return;
         float rowHeight = dp(36);
@@ -287,7 +371,8 @@ public final class KeyboardView extends View {
             int index = candidateScroll + row;
             if (index >= candidates.size()) break;
             Candidate candidate = candidates.get(index);
-            RectF rect = new RectF(dp(8), top + row * rowHeight + dp(2), getWidth() - dp(8), top + (row + 1) * rowHeight - dp(2));
+            RectF rect = new RectF(keyboardLeft() + dp(8), top + row * rowHeight + dp(2),
+                    keyboardRight() - dp(8), top + (row + 1) * rowHeight - dp(2));
             paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : Color.argb(140, 68, 68, 92));
             canvas.drawRoundRect(rect, dp(7), dp(7), paint);
             paint.setTextAlign(Paint.Align.LEFT);
@@ -308,67 +393,69 @@ public final class KeyboardView extends View {
         return dp(CANDIDATE_BAR_DP + (candidatesExpanded ? EXPANDED_CANDIDATES_DP : 0));
     }
 
-    private void buildKeys(int width) {
+    private void buildKeys() {
         keys.clear();
         float top = candidateAreaHeight() + dp(8);
+        int keyboardWidth = Math.round(keyboardRight() - keyboardLeft());
         if (clipboard) {
-            addRow(width, top, new String[]{"Clear", "ABC", "かな"},
+            addRow(keyboardWidth, top, new String[]{"Clear", "ABC", "かな"},
                     new String[]{"#clear", "#en", "#jp"});
             if (clipboardHistory.isEmpty()) {
-                addRow(width, top + dp(50), new String[]{"Clipboard empty"}, new String[]{""});
+                addRow(keyboardWidth, top + keyPitch(),
+                        new String[]{"Clipboard empty"}, new String[]{""});
             } else {
                 for (int row = 0; row < 3 && clipboardScroll + row < clipboardHistory.size(); row++) {
                     int index = clipboardScroll + row;
-                    addRow(width, top + dp(50 * (row + 1)),
+                    addRow(keyboardWidth, top + keyPitch() * (row + 1),
                             new String[]{clipboardLabel(clipboardHistory.get(index))},
                             new String[]{"#clipboard:" + index});
                 }
             }
         } else if (symbols) {
-            buildSymbols(width, top);
+            buildSymbols(keyboardWidth, top);
         } else if (japanese) {
-            buildJapanese(width, top);
+            buildJapanese(keyboardWidth, top);
         } else {
-            buildQwerty(width, top);
+            buildQwerty(keyboardWidth, top);
         }
     }
 
     private void buildSymbols(int width, float top) {
         if (shifted) {
             addRow(width, top, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"}, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"});
-            addRow(width, top + dp(50), new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"}, new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"});
-            addRow(width, top + dp(100), new String[]{"⇪", "•", "√", "π", "÷", "×", "°", "¶", "⌫"}, new String[]{"#shift", "•", "√", "π", "÷", "×", "°", "¶", "#del"});
-            addSpaceRow(width, top + dp(150), new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
+            addRow(width, top + keyPitch(), new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"}, new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"});
+            addRow(width, top + keyPitch() * 2, new String[]{"⇪", "•", "√", "π", "÷", "×", "°", "¶", "⌫"}, new String[]{"#shift", "•", "√", "π", "÷", "×", "°", "¶", "#del"});
+            addSpaceRow(width, top + keyPitch() * 3, new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
             return;
         }
         addRow(width, top, split("1234567890"), split("1234567890"));
-        addRow(width, top + dp(50), new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"}, new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"});
-        addRow(width, top + dp(100), new String[]{"⇧", ",", "?", "!", "'", "\"", ":", ";", "⌫"}, new String[]{"#shift", ",", "?", "!", "'", "\"", ":", ";", "#del"});
-        addSpaceRow(width, top + dp(150), new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
+        addRow(width, top + keyPitch(), new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"}, new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"});
+        addRow(width, top + keyPitch() * 2, new String[]{"⇧", ",", "?", "!", "'", "\"", ":", ";", "⌫"}, new String[]{"#shift", ",", "?", "!", "'", "\"", ":", ";", "#del"});
+        addSpaceRow(width, top + keyPitch() * 3, new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
     }
 
     private void buildQwerty(int width, float top) {
         String first = shifted ? "QWERTYUIOP" : "qwertyuiop";
         String second = shifted ? "ASDFGHJKL" : "asdfghjkl";
         addRow(width, top, split(first), split("qwertyuiop"));
-        addRow(width, top + dp(50), split(second), split("asdfghjkl"));
-        addRow(width, top + dp(100), new String[]{shifted ? "⇪" : "⇧", shifted ? "Z" : "z", shifted ? "X" : "x", shifted ? "C" : "c", shifted ? "V" : "v", shifted ? "B" : "b", shifted ? "N" : "n", shifted ? "M" : "m", "⌫"}, new String[]{"#shift", "z", "x", "c", "v", "b", "n", "m", "#del"});
-        addSpaceRow(width, top + dp(150), new String[]{"123", "かな"}, new String[]{"#sym", "#jp"}, "space", " ", new String[]{"clip", "↵"}, new String[]{"#clip", "#enter"});
+        addRow(width, top + keyPitch(), split(second), split("asdfghjkl"));
+        addRow(width, top + keyPitch() * 2, new String[]{shifted ? "⇪" : "⇧", shifted ? "Z" : "z", shifted ? "X" : "x", shifted ? "C" : "c", shifted ? "V" : "v", shifted ? "B" : "b", shifted ? "N" : "n", shifted ? "M" : "m", "⌫"}, new String[]{"#shift", "z", "x", "c", "v", "b", "n", "m", "#del"});
+        addSpaceRow(width, top + keyPitch() * 3, new String[]{"123", "かな"}, new String[]{"#sym", "#jp"}, "space", " ", new String[]{"clip", "↵"}, new String[]{"#clip", "#enter"});
     }
 
     private void buildJapanese(int width, float top) {
         addRow(width, top, new String[]{"clip", "あ", "か", "さ", "⌫"}, new String[]{"#clip", "あ", "か", "さ", "#del"});
-        addRow(width, top + dp(50), new String[]{"ABC", "た", "な", "は", "space"}, new String[]{"#en", "た", "な", "は", " "});
-        addRow(width, top + dp(100), new String[]{"123", "ま", "や", "ら", ""}, new String[]{"#sym", "ま", "や", "ら", ""});
-        addRow(width, top + dp(150), new String[]{"", "小", "わ", "、。", "return"}, new String[]{"", "#small", "わ", "、", "#enter"});
+        addRow(width, top + keyPitch(), new String[]{"ABC", "た", "な", "は", "space"}, new String[]{"#en", "た", "な", "は", " "});
+        addRow(width, top + keyPitch() * 2, new String[]{"123", "ま", "や", "ら", ""}, new String[]{"#sym", "ま", "や", "ら", ""});
+        addRow(width, top + keyPitch() * 3, new String[]{"", "小", "わ", "、。", "return"}, new String[]{"", "#small", "わ", "、", "#enter"});
     }
 
     private void addRow(int width, float top, String[] labels, String[] values) {
         float gap = dp(6);
-        float x = dp(12);
+        float x = keyboardLeft() + dp(12);
         float keyWidth = (width - dp(24) - gap * (labels.length - 1)) / labels.length;
         for (int i = 0; i < labels.length; i++) {
-            keys.add(new Key(x, top, x + keyWidth, top + dp(42), labels[i], values[i]));
+            keys.add(new Key(x, top, x + keyWidth, top + keyHeight(), labels[i], values[i]));
             x += keyWidth + gap;
         }
     }
@@ -376,21 +463,22 @@ public final class KeyboardView extends View {
     private void addSpaceRow(int width, float top, String[] leftLabels, String[] leftValues, String centerLabel, String centerValue, String[] rightLabels, String[] rightValues) {
         float gap = dp(6);
         float keyWidth = (width - dp(24) - gap * (leftLabels.length + rightLabels.length)) / (leftLabels.length + rightLabels.length + 4);
-        float x = dp(12);
+        float x = keyboardLeft() + dp(12);
         for (int i = 0; i < leftLabels.length; i++) {
-            keys.add(new Key(x, top, x + keyWidth, top + dp(42), leftLabels[i], leftValues[i]));
+            keys.add(new Key(x, top, x + keyWidth, top + keyHeight(), leftLabels[i], leftValues[i]));
             x += keyWidth + gap;
         }
-        keys.add(new Key(x, top, x + keyWidth * 4, top + dp(42), centerLabel, centerValue));
+        keys.add(new Key(x, top, x + keyWidth * 4, top + keyHeight(), centerLabel, centerValue));
         x += keyWidth * 4 + gap;
         for (int i = 0; i < rightLabels.length; i++) {
-            keys.add(new Key(x, top, x + keyWidth, top + dp(42), rightLabels[i], rightValues[i]));
+            keys.add(new Key(x, top, x + keyWidth, top + keyHeight(), rightLabels[i], rightValues[i]));
             x += keyWidth + gap;
         }
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
-        buildKeys(getWidth());
+        if (resizeMode) return handleResizeTouch(event);
+        buildKeys();
         int action = event.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             cancelPointers();
@@ -407,12 +495,123 @@ public final class KeyboardView extends View {
         return true;
     }
 
+    private boolean handleResizeTouch(MotionEvent event) {
+        int eventAction = event.getActionMasked();
+        if (eventAction == MotionEvent.ACTION_DOWN) {
+            float x = event.getX();
+            float y = event.getY();
+            float slop = dp(28);
+            boolean withinWidth = x >= keyboardLeft() - slop
+                    && x <= keyboardRight() + slop;
+            boolean withinHeight = y >= 0 && y <= keyboardBoundary() + slop;
+            resizeEdges = 0;
+            if (withinHeight && Math.abs(x - keyboardLeft()) <= slop) {
+                resizeEdges |= RESIZE_LEFT;
+            }
+            if (withinWidth && y <= slop) resizeEdges |= RESIZE_TOP;
+            if (withinHeight && Math.abs(x - keyboardRight()) <= slop) {
+                resizeEdges |= RESIZE_RIGHT;
+            }
+            if (withinWidth && Math.abs(y - keyboardBoundary()) <= slop) {
+                resizeEdges |= RESIZE_BOTTOM;
+            }
+            if (resizeEdges == 0 && x > keyboardLeft() && x < keyboardRight()
+                    && y > 0 && y < keyboardBoundary()) resizeEdges = RESIZE_MOVE;
+            if (resizeEdges == 0) return true;
+            resizePointerId = event.getPointerId(0);
+            resizeDownRawX = event.getRawX();
+            resizeDownRawY = event.getRawY();
+            resizeStartWidthDp = keyboardWidthDp;
+            resizeStartHeightDp = keyboardHeightDp;
+            resizeStartLeftDp = keyboardLeftDp;
+            resizeStartGapDp = bottomGapDp;
+        } else if (eventAction == MotionEvent.ACTION_MOVE
+                && resizePointerId != MotionEvent.INVALID_POINTER_ID) {
+            int index = event.findPointerIndex(resizePointerId);
+            if (index < 0) return true;
+            int dx = pxToDp(event.getRawX() - resizeDownRawX);
+            int dy = pxToDp(event.getRawY() - resizeDownRawY);
+            int minWidth = Math.min(MIN_WIDTH_DP, availableWidthDp);
+            if ((resizeEdges & RESIZE_LEFT) != 0) {
+                int right = resizeStartLeftDp + resizeStartWidthDp;
+                keyboardLeftDp = clamp(resizeStartLeftDp + dx, 0, right - minWidth);
+                keyboardWidthDp = right - keyboardLeftDp;
+            } else if ((resizeEdges & RESIZE_RIGHT) != 0) {
+                int maxRight = availableWidthDp == Integer.MAX_VALUE
+                        ? pxToDp(getResources().getDisplayMetrics().widthPixels)
+                        : availableWidthDp;
+                int right = clamp(resizeStartLeftDp + resizeStartWidthDp + dx,
+                        resizeStartLeftDp + minWidth, maxRight);
+                keyboardWidthDp = right - resizeStartLeftDp;
+            } else if ((resizeEdges & RESIZE_MOVE) != 0) {
+                keyboardLeftDp = clamp(resizeStartLeftDp + dx, 0,
+                        Math.max(0, availableWidthDp - resizeStartWidthDp));
+            }
+            if ((resizeEdges & RESIZE_TOP) != 0) {
+                int maxHeight = availableHeightDp == Integer.MAX_VALUE ? MAX_HEIGHT_DP
+                        : Math.min(MAX_HEIGHT_DP, availableHeightDp - resizeStartGapDp);
+                keyboardHeightDp = clamp(resizeStartHeightDp - dy,
+                        Math.min(MIN_HEIGHT_DP, maxHeight), maxHeight);
+            } else if ((resizeEdges & RESIZE_BOTTOM) != 0) {
+                int total = resizeStartHeightDp + resizeStartGapDp;
+                keyboardHeightDp = clamp(resizeStartHeightDp + dy,
+                        Math.min(MIN_HEIGHT_DP, total), Math.min(MAX_HEIGHT_DP, total));
+                bottomGapDp = total - keyboardHeightDp;
+            } else if ((resizeEdges & RESIZE_MOVE) != 0) {
+                int maxGap = availableHeightDp == Integer.MAX_VALUE
+                        ? pxToDp(getResources().getDisplayMetrics().heightPixels)
+                        : Math.max(0, availableHeightDp - resizeStartHeightDp);
+                bottomGapDp = clamp(resizeStartGapDp - dy, 0, maxGap);
+            }
+            constrainFrame();
+            requestLayout();
+            invalidate();
+        } else if (eventAction == MotionEvent.ACTION_UP
+                || eventAction == MotionEvent.ACTION_CANCEL) {
+            resizePointerId = MotionEvent.INVALID_POINTER_ID;
+            resizeEdges = 0;
+        }
+        return true;
+    }
+
+    private void constrainFrame() {
+        keyboardHeightDp = clamp(keyboardHeightDp, MIN_HEIGHT_DP, MAX_HEIGHT_DP);
+        if (availableWidthDp != Integer.MAX_VALUE) {
+            keyboardWidthDp = clamp(keyboardWidthDp,
+                    Math.min(MIN_WIDTH_DP, availableWidthDp), availableWidthDp);
+            keyboardLeftDp = clamp(keyboardLeftDp, 0,
+                    Math.max(0, availableWidthDp - keyboardWidthDp));
+        }
+        if (availableHeightDp != Integer.MAX_VALUE) {
+            keyboardHeightDp = Math.min(keyboardHeightDp, Math.max(1, availableHeightDp));
+            bottomGapDp = clamp(bottomGapDp, 0,
+                    Math.max(0, availableHeightDp - keyboardHeightDp));
+        }
+    }
+
+    private float keyboardLeft() { return dp(keyboardLeftDp); }
+
+    private float keyboardRight() { return keyboardLeft() + dp(keyboardWidthDp); }
+
+    private int keyboardBoundary() {
+        return dp(keyboardHeightDp + (candidatesExpanded ? EXPANDED_CANDIDATES_DP : 0));
+    }
+
+    private float keyHeight() {
+        float top = candidateAreaHeight() + dp(8);
+        return Math.max(dp(24),
+                (keyboardBoundary() - dp(12) - top - dp(24)) / 4f);
+    }
+
+    private float keyPitch() { return keyHeight() + dp(8); }
+
     private void startPointer(MotionEvent event, int index) {
         if (cursorPointerId != MotionEvent.INVALID_POINTER_ID) return;
         int id = event.getPointerId(index);
         float x = event.getX(index);
         float y = event.getY(index);
         boolean candidate = candidatePointerId == MotionEvent.INVALID_POINTER_ID
+                && x >= keyboardLeft() && x < keyboardRight()
                 && y < candidateAreaHeight() && japanese && !candidates.isEmpty();
         int keyIndex = candidate ? -1 : keyAt(x, y);
         PointerState state = new PointerState(keyIndex < 0 ? null : keys.get(keyIndex), x, y,
@@ -560,11 +759,12 @@ public final class KeyboardView extends View {
 
     private void handleCandidateTouch(float x, float y, boolean dragged) {
         if (dragged) return;
-        if (x < dp(34) && y < dp(CANDIDATE_BAR_DP)) {
+        if (x < keyboardLeft() + dp(34) && y < dp(CANDIDATE_BAR_DP)) {
             if (action != null) action.onPrivateModeToggle();
             return;
         }
-        if (x > getWidth() - dp(38) && y < dp(CANDIDATE_BAR_DP) && !candidates.isEmpty()) {
+        if (x > keyboardRight() - dp(38) && y < dp(CANDIDATE_BAR_DP)
+                && !candidates.isEmpty()) {
             candidatesExpanded = !candidatesExpanded;
             if (candidatesExpanded) candidateScroll = 0;
             requestLayout();
@@ -748,5 +948,8 @@ public final class KeyboardView extends View {
 
     private int clamp(int value, int min, int max) { return Math.max(min, Math.min(max, value)); }
     private float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
+    private int pxToDp(float value) {
+        return Math.round(value / getResources().getDisplayMetrics().density);
+    }
     private int dp(float value) { return (int) (value * getResources().getDisplayMetrics().density + .5f); }
 }

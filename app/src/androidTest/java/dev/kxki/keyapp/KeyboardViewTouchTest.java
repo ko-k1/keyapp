@@ -61,9 +61,9 @@ public final class KeyboardViewTouchTest {
     @Test public void gapMidpointsHitKeysButOuterMarginDoesNot() {
         float top = keyboardTop();
         float gap = dp(6);
-        float keyWidth = (WIDTH - dp(24) - gap * 9) / 10f;
-        float horizontalMidpoint = dp(12) + keyWidth + gap / 2f;
-        float verticalMidpoint = top + dp(42) + (dp(50) - dp(42)) / 2f;
+        float keyWidth = (keyboardWidth() - dp(24) - gap * 9) / 10f;
+        float horizontalMidpoint = keyboardLeft() + dp(12) + keyWidth + gap / 2f;
+        float verticalMidpoint = top + keyHeight() + dp(4);
 
         tap(horizontalMidpoint, top + dp(21));
         tap(qCenter()[0], verticalMidpoint);
@@ -173,18 +173,60 @@ public final class KeyboardViewTouchTest {
         onMain(() -> view.setClipboardHistory(
                 Arrays.asList("one", "two", "three", "four", "five")));
         tap(qwertyClipboardCenter()[0], qwertyClipboardCenter()[1]);
-        tap(WIDTH / 2f, keyboardTop() + dp(50) + dp(21));
+        tap(keyboardLeft() + keyboardWidth() / 2f, rowCenter(1));
 
-        float[] start = {WIDTH / 2f, keyboardTop() + dp(150) + dp(21)};
-        float[] end = {WIDTH / 2f, keyboardTop() + dp(50) + dp(21)};
+        float[] start = {keyboardLeft() + keyboardWidth() / 2f, rowCenter(3)};
+        float[] end = {keyboardLeft() + keyboardWidth() / 2f, rowCenter(1)};
         touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{start});
         touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{end});
         touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{end});
-        tap(WIDTH / 2f, keyboardTop() + dp(150) + dp(21));
+        tap(keyboardLeft() + keyboardWidth() / 2f, rowCenter(3));
 
         assertEquals(Arrays.asList("one", "five"), action.rawTexts);
         tap(clipboardControlCenter(0)[0], clipboardControlCenter(0)[1]);
         assertEquals(1, action.clipboardClears);
+    }
+
+    @Test public void resizeFrameMovesFreelyAndOnlyChangesKeyRectangles() {
+        onMain(() -> {
+            view.setKeyboardFrame(pxToDp(WIDTH) - 20, 360, 10, 50);
+            measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        });
+        assertEquals(dp(410), view.getMeasuredHeight());
+        int background = colorAt(keyboardLeft() + dp(10), dp(330));
+        assertEquals(background, colorAt(dp(5), dp(100)));
+        assertEquals(background, colorAt(WIDTH - dp(5), dp(100)));
+        assertEquals(background, colorAt(keyboardLeft() + dp(10), dp(380)));
+        assertEquals(dp(8), Math.round(keyPitch() - keyHeight()));
+        assertEquals(dp(48), Math.round(keyboardTop()));
+
+        onMain(() -> view.setResizeMode(true));
+        tap(qCenter()[0], qCenter()[1]);
+        assertEquals(0, action.rawTexts.size());
+
+        int oldWidth = view.getKeyboardWidthDp();
+        drag(keyboardLeft() + keyboardWidth() - dp(2), dp(150),
+                keyboardLeft() + keyboardWidth() - dp(42), dp(150));
+        assertEquals(oldWidth - 40, view.getKeyboardWidthDp());
+
+        int oldLeft = view.getKeyboardLeftDp();
+        int oldGap = view.getKeyboardBottomGapDp();
+        drag(keyboardLeft() + keyboardWidth() / 2f, dp(150),
+                keyboardLeft() + keyboardWidth() / 2f + dp(30), dp(110));
+        assertEquals(oldLeft + 30, view.getKeyboardLeftDp());
+        assertEquals(oldGap + 40, view.getKeyboardBottomGapDp());
+
+        drag(keyboardLeft() + keyboardWidth() / 2f, dp(2),
+                keyboardLeft() + keyboardWidth() / 2f, dp(102));
+        assertEquals(260, view.getKeyboardHeightDp());
+
+        onMain(() -> {
+            view.setKeyboardFrame(pxToDp(WIDTH) - 120, 340, 60, 30);
+            view.setResizeMode(false);
+            measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        });
+        tap(qCenter()[0], qCenter()[1]);
+        assertEquals(Arrays.asList("q"), action.rawTexts);
     }
 
     private void overlap(float[] first, float[] second, int firstReleaseIndex) {
@@ -202,6 +244,18 @@ public final class KeyboardViewTouchTest {
         float[] point = {x, y};
         touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{point});
         touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{point});
+    }
+
+    private void drag(float startX, float startY, float endX, float endY) {
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{{startX, startY}});
+        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{{endX, endY}});
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{{endX, endY}});
+    }
+
+    private void measure(int heightMeasureSpec) {
+        view.measure(View.MeasureSpec.makeMeasureSpec(WIDTH, View.MeasureSpec.EXACTLY),
+                heightMeasureSpec);
+        view.layout(0, 0, WIDTH, view.getMeasuredHeight());
     }
 
     private void touch(int eventAction, int[] ids, float[][] points) {
@@ -242,54 +296,64 @@ public final class KeyboardViewTouchTest {
 
     private float[] firstRowCenter(int index) {
         float gap = dp(6);
-        float keyWidth = (WIDTH - dp(24) - gap * 9) / 10f;
-        return new float[]{dp(12) + index * (keyWidth + gap) + keyWidth / 2f,
-                keyboardTop() + dp(21)};
+        float keyWidth = (keyboardWidth() - dp(24) - gap * 9) / 10f;
+        return new float[]{keyboardLeft() + dp(12)
+                + index * (keyWidth + gap) + keyWidth / 2f, rowCenter(0)};
     }
 
     private float[] thirdRowCenter(int index) {
         float gap = dp(6);
-        float keyWidth = (WIDTH - dp(24) - gap * 8) / 9f;
-        return new float[]{dp(12) + index * (keyWidth + gap) + keyWidth / 2f,
-                keyboardTop() + dp(100) + dp(21)};
+        float keyWidth = (keyboardWidth() - dp(24) - gap * 8) / 9f;
+        return new float[]{keyboardLeft() + dp(12)
+                + index * (keyWidth + gap) + keyWidth / 2f, rowCenter(2)};
     }
 
     private float[] japaneseKeyCenter() {
         float gap = dp(6);
-        float keyWidth = (WIDTH - dp(24) - gap * 4) / 8f;
-        return new float[]{dp(12) + keyWidth + gap + keyWidth / 2f,
-                keyboardTop() + dp(150) + dp(21)};
+        float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 8f;
+        return new float[]{keyboardLeft() + dp(12) + keyWidth + gap + keyWidth / 2f,
+                rowCenter(3)};
     }
 
     private float[] qwertySpaceCenter() {
         float gap = dp(6);
-        float keyWidth = (WIDTH - dp(24) - gap * 4) / 8f;
-        return new float[]{dp(12) + 2 * (keyWidth + gap) + keyWidth * 2,
-                keyboardTop() + dp(150) + dp(21)};
+        float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 8f;
+        return new float[]{keyboardLeft() + dp(12)
+                + 2 * (keyWidth + gap) + keyWidth * 2, rowCenter(3)};
     }
 
     private float[] japaneseSpaceCenter() {
         float gap = dp(6);
-        float keyWidth = (WIDTH - dp(24) - gap * 4) / 5f;
-        return new float[]{dp(12) + 4 * (keyWidth + gap) + keyWidth / 2f,
-                keyboardTop() + dp(50) + dp(21)};
+        float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 5f;
+        return new float[]{keyboardLeft() + dp(12)
+                + 4 * (keyWidth + gap) + keyWidth / 2f, rowCenter(1)};
     }
 
     private float[] qwertyClipboardCenter() {
         float gap = dp(6);
-        float keyWidth = (WIDTH - dp(24) - gap * 4) / 8f;
-        return new float[]{dp(12) + keyWidth * 6.5f + gap * 3,
-                keyboardTop() + dp(150) + dp(21)};
+        float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 8f;
+        return new float[]{keyboardLeft() + dp(12) + keyWidth * 6.5f + gap * 3,
+                rowCenter(3)};
     }
 
     private float[] clipboardControlCenter(int index) {
         float gap = dp(6);
-        float keyWidth = (WIDTH - dp(24) - gap * 2) / 3f;
-        return new float[]{dp(12) + index * (keyWidth + gap) + keyWidth / 2f,
-                keyboardTop() + dp(21)};
+        float keyWidth = (keyboardWidth() - dp(24) - gap * 2) / 3f;
+        return new float[]{keyboardLeft() + dp(12)
+                + index * (keyWidth + gap) + keyWidth / 2f, rowCenter(0)};
     }
 
     private float keyboardTop() { return dp(40) + dp(8); }
+
+    private float keyboardLeft() { return dp(view.getKeyboardLeftDp()); }
+    private float keyboardWidth() { return dp(view.getKeyboardWidthDp()); }
+    private float keyHeight() {
+        return (dp(view.getKeyboardHeightDp()) - dp(12) - keyboardTop() - dp(24)) / 4f;
+    }
+    private float keyPitch() { return keyHeight() + dp(8); }
+    private float rowCenter(int row) { return keyboardTop() + keyPitch() * row + keyHeight() / 2f; }
+
+    private int pxToDp(int value) { return Math.round(value / density); }
 
     private int dp(float value) { return (int) (value * density + .5f); }
 

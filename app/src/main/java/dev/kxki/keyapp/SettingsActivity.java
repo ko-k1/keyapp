@@ -45,6 +45,12 @@ public final class SettingsActivity extends Activity {
                 preferences.edit().putBoolean(KeyAppImeService.MANUAL_PRIVATE, checked).apply());
         root.addView(privacy);
 
+        Button resize = new Button(this);
+        resize.setText(R.string.resize_keyboard);
+        resize.setOnClickListener(view ->
+                startActivity(new Intent(this, KeyboardResizeActivity.class)));
+        root.addView(resize);
+
         Button clear = new Button(this);
         clear.setText(R.string.clear_learning);
         clear.setOnClickListener(view -> new AlertDialog.Builder(this)
