@@ -9,8 +9,10 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.SparseArray;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -58,29 +60,18 @@ public final class KeyboardView extends View {
     private final List<Key> keys = new ArrayList<>();
     private final List<CandidateHit> candidateHits = new ArrayList<>();
     private final Handler repeatHandler = new Handler(Looper.getMainLooper());
-    private final Runnable repeatRunnable = new Runnable() {
-        @Override public void run() {
-            if (downKeyIndex >= 0 && downKeyIndex < keys.size()) {
-                handle(keys.get(downKeyIndex), 0, 0);
-                repeatHandler.postDelayed(this, 50);
-            }
-        }
-    };
-
+    private final SparseArray<PointerState> pointers = new SparseArray<>();
     private OnKeyboardAction action;
     private boolean japanese;
     private boolean clipboard;
     private boolean shifted;
+    private boolean shiftLocked;
     private boolean symbols;
     private boolean candidatesExpanded;
     private boolean engineAvailable;
     private boolean privateMode;
     private int candidateScroll;
-    private int downKeyIndex = -1;
-    private float downX;
-    private float downY;
-    private boolean candidateGesture;
-    private boolean candidateDrag;
+    private int candidatePointerId = MotionEvent.INVALID_POINTER_ID;
     private List<Candidate> candidates = Collections.emptyList();
 
     private static final class Key {
@@ -92,6 +83,26 @@ public final class KeyboardView extends View {
             this.rect = new RectF(left, top, right, bottom);
             this.label = label;
             this.value = value;
+        }
+    }
+
+    private static final class PointerState {
+        final Key key;
+        final float downX;
+        final float downY;
+        final boolean candidate;
+        float candidateY;
+        boolean candidateDrag;
+        boolean shiftLongPressed;
+        Runnable repeat;
+        Runnable shiftLongPress;
+
+        PointerState(Key key, float x, float y, boolean candidate) {
+            this.key = key;
+            this.downX = x;
+            this.downY = y;
+            this.candidate = candidate;
+            this.candidateY = y;
         }
     }
 
@@ -116,9 +127,11 @@ public final class KeyboardView extends View {
     }
 
     public void resetForInput() {
+        cancelPointers();
         japanese = false;
         clipboard = false;
         shifted = false;
+        shiftLocked = false;
         symbols = false;
         candidatesExpanded = false;
         candidateScroll = 0;
@@ -152,7 +165,7 @@ public final class KeyboardView extends View {
         drawCandidateArea(canvas);
         for (int i = 0; i < keys.size(); i++) {
             Key key = keys.get(i);
-            boolean pressed = i == downKeyIndex;
+            boolean pressed = isPressed(key);
             paint.setColor(pressed ? HIGHLIGHT_COLOR : Color.argb(190, 50, 50, 65));
             canvas.drawRoundRect(key.rect, dp(12), dp(12), paint);
             paint.setColor(pressed ? Color.WHITE : Color.rgb(220, 220, 230));
@@ -245,6 +258,13 @@ public final class KeyboardView extends View {
     }
 
     private void buildSymbols(int width, float top) {
+        if (shifted) {
+            addRow(width, top, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"}, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"});
+            addRow(width, top + dp(50), new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"}, new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"});
+            addRow(width, top + dp(100), new String[]{shiftLocked ? "⇪" : "⇧", "•", "√", "π", "÷", "×", "°", "¶", "⌫"}, new String[]{"#shift", "•", "√", "π", "÷", "×", "°", "¶", "#del"});
+            addSpaceRow(width, top + dp(150), new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
+            return;
+        }
         addRow(width, top, split("1234567890"), split("1234567890"));
         addRow(width, top + dp(50), new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"}, new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"});
         addRow(width, top + dp(100), new String[]{"⇧", ",", "?", "!", "'", "\"", ":", ";", "⌫"}, new String[]{"#shift", ",", "?", "!", "'", "\"", ":", ";", "#del"});
@@ -256,7 +276,7 @@ public final class KeyboardView extends View {
         String second = shifted ? "ASDFGHJKL" : "asdfghjkl";
         addRow(width, top, split(first), split("qwertyuiop"));
         addRow(width, top + dp(50), split(second), split("asdfghjkl"));
-        addRow(width, top + dp(100), new String[]{shifted ? "⇪" : "⇧", shifted ? "Z" : "z", shifted ? "X" : "x", shifted ? "C" : "c", shifted ? "V" : "v", shifted ? "B" : "b", shifted ? "N" : "n", shifted ? "M" : "m", "⌫"}, new String[]{"#shift", "z", "x", "c", "v", "b", "n", "m", "#del"});
+        addRow(width, top + dp(100), new String[]{shiftLocked ? "⇪" : "⇧", shifted ? "Z" : "z", shifted ? "X" : "x", shifted ? "C" : "c", shifted ? "V" : "v", shifted ? "B" : "b", shifted ? "N" : "n", shifted ? "M" : "m", "⌫"}, new String[]{"#shift", "z", "x", "c", "v", "b", "n", "m", "#del"});
         addSpaceRow(width, top + dp(150), new String[]{"123", "かな"}, new String[]{"#sym", "#jp"}, "space", " ", new String[]{"clip", "↵"}, new String[]{"#clip", "#enter"});
     }
 
@@ -295,65 +315,105 @@ public final class KeyboardView extends View {
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         buildKeys(getWidth());
-        if (event.getAction() == MotionEvent.ACTION_DOWN) {
-            downX = event.getX();
-            downY = event.getY();
-            candidateGesture = downY < candidateAreaHeight() && japanese && !candidates.isEmpty();
-            candidateDrag = false;
-            if (candidateGesture) {
-                invalidate();
-                return true;
-            }
-            downKeyIndex = keyAt(downX, downY);
-            if (downKeyIndex >= 0 && "#del".equals(keys.get(downKeyIndex).value)) {
-                repeatHandler.removeCallbacks(repeatRunnable);
-                repeatHandler.postDelayed(repeatRunnable, 400);
-            }
-            invalidate();
-            return true;
-        }
-        if (event.getAction() == MotionEvent.ACTION_MOVE
-                && downKeyIndex >= 0 && "#del".equals(keys.get(downKeyIndex).value)
-                && Math.abs(event.getX() - downX) + Math.abs(event.getY() - downY) > dp(20)) {
-            repeatHandler.removeCallbacks(repeatRunnable);
-        }
-        if (event.getAction() == MotionEvent.ACTION_MOVE && candidateGesture && candidatesExpanded) {
-            float delta = event.getY() - downY;
-            if (Math.abs(delta) > dp(10)) {
-                candidateDrag = true;
-                int steps = (int) (-delta / dp(28));
-                candidateScroll = clamp(candidateScroll + steps, 0, Math.max(0, candidates.size() - 1));
-                downY = event.getY();
-                invalidate();
-            }
-            return true;
-        }
-        if (event.getAction() == MotionEvent.ACTION_UP) {
-            repeatHandler.removeCallbacks(repeatRunnable);
-            if (candidateGesture) {
-                performClick();
-                handleCandidateTouch(event.getX(), event.getY());
-                candidateGesture = false;
-                downKeyIndex = -1;
-                invalidate();
-                return true;
-            }
-            Key key = downKeyIndex >= 0 && downKeyIndex < keys.size() ? keys.get(downKeyIndex) : null;
-            downKeyIndex = -1;
-            invalidate();
-            if (key != null) {
-                performClick();
-                handle(key, event.getX() - downX, event.getY() - downY);
-            }
-            return true;
-        }
-        if (event.getAction() == MotionEvent.ACTION_CANCEL) {
-            repeatHandler.removeCallbacks(repeatRunnable);
-            downKeyIndex = -1;
-            candidateGesture = false;
-            invalidate();
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            cancelPointers();
+            startPointer(event, event.getActionIndex());
+        } else if (action == MotionEvent.ACTION_POINTER_DOWN) {
+            startPointer(event, event.getActionIndex());
+        } else if (action == MotionEvent.ACTION_MOVE) {
+            movePointers(event);
+        } else if (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP) {
+            finishPointer(event, event.getActionIndex());
+        } else if (action == MotionEvent.ACTION_CANCEL) {
+            cancelPointers();
         }
         return true;
+    }
+
+    private void startPointer(MotionEvent event, int index) {
+        int id = event.getPointerId(index);
+        float x = event.getX(index);
+        float y = event.getY(index);
+        boolean candidate = candidatePointerId == MotionEvent.INVALID_POINTER_ID
+                && y < candidateAreaHeight() && japanese && !candidates.isEmpty();
+        int keyIndex = candidate ? -1 : keyAt(x, y);
+        PointerState state = new PointerState(keyIndex < 0 ? null : keys.get(keyIndex), x, y, candidate);
+        pointers.put(id, state);
+        if (candidate) candidatePointerId = id;
+        if (state.key != null && "#del".equals(state.key.value)) {
+            state.repeat = new Runnable() {
+                @Override public void run() {
+                    if (pointers.get(id) != state) return;
+                    handle(state.key, 0, 0);
+                    repeatHandler.postDelayed(this, 50);
+                }
+            };
+            repeatHandler.postDelayed(state.repeat, 400);
+        } else if (state.key != null && "#shift".equals(state.key.value)) {
+            state.shiftLongPress = () -> {
+                if (pointers.get(id) != state) return;
+                shiftLocked = !shiftLocked;
+                shifted = shiftLocked;
+                state.shiftLongPressed = true;
+                invalidate();
+            };
+            repeatHandler.postDelayed(state.shiftLongPress, ViewConfiguration.getLongPressTimeout());
+        }
+        invalidate();
+    }
+
+    private void movePointers(MotionEvent event) {
+        for (int i = 0; i < event.getPointerCount(); i++) {
+            PointerState state = pointers.get(event.getPointerId(i));
+            if (state == null) continue;
+            float x = event.getX(i);
+            float y = event.getY(i);
+            if (!state.candidate) {
+                if (Math.abs(x - state.downX) + Math.abs(y - state.downY) > dp(20)) cancelCallbacks(state);
+                continue;
+            }
+            if (!candidatesExpanded) continue;
+            float delta = y - state.candidateY;
+            if (Math.abs(delta) > dp(10)) {
+                state.candidateDrag = true;
+                int steps = (int) (-delta / dp(28));
+                candidateScroll = clamp(candidateScroll + steps, 0, Math.max(0, candidates.size() - 1));
+                state.candidateY = y;
+                invalidate();
+            }
+        }
+    }
+
+    private void finishPointer(MotionEvent event, int index) {
+        int id = event.getPointerId(index);
+        PointerState state = pointers.get(id);
+        if (state == null) return;
+        float x = event.getX(index);
+        float y = event.getY(index);
+        cancelCallbacks(state);
+        pointers.remove(id);
+        if (state.candidate) {
+            if (candidatePointerId == id) candidatePointerId = MotionEvent.INVALID_POINTER_ID;
+            performClick();
+            handleCandidateTouch(x, y, state.candidateDrag);
+        } else if (state.key != null && !(state.shiftLongPressed && "#shift".equals(state.key.value))) {
+            performClick();
+            handle(state.key, x - state.downX, y - state.downY);
+        }
+        invalidate();
+    }
+
+    private void cancelCallbacks(PointerState state) {
+        if (state.repeat != null) repeatHandler.removeCallbacks(state.repeat);
+        if (state.shiftLongPress != null) repeatHandler.removeCallbacks(state.shiftLongPress);
+    }
+
+    private void cancelPointers() {
+        for (int i = 0; i < pointers.size(); i++) cancelCallbacks(pointers.valueAt(i));
+        pointers.clear();
+        candidatePointerId = MotionEvent.INVALID_POINTER_ID;
+        invalidate();
     }
 
     @Override public boolean performClick() {
@@ -361,8 +421,8 @@ public final class KeyboardView extends View {
         return true;
     }
 
-    private void handleCandidateTouch(float x, float y) {
-        if (candidateDrag) return;
+    private void handleCandidateTouch(float x, float y, boolean dragged) {
+        if (dragged) return;
         if (x < dp(34) && y < dp(CANDIDATE_BAR_DP)) {
             if (action != null) action.onPrivateModeToggle();
             return;
@@ -390,7 +450,11 @@ public final class KeyboardView extends View {
                 else action.onDeleteRange(range);
                 return;
             case "#enter": action.onEnter(); return;
-            case "#shift": shifted = !shifted; invalidate(); return;
+            case "#shift":
+                if (shiftLocked) shiftLocked = shifted = false;
+                else shifted = !shifted;
+                invalidate();
+                return;
             case "#sym":
                 if (japanese) {
                     japanese = false;
@@ -431,7 +495,7 @@ public final class KeyboardView extends View {
             action.onSpace(japanese && !symbols);
         } else {
             action.onRawText(shifted && value.length() == 1 ? value.toUpperCase(Locale.ROOT) : value);
-            if (shifted) {
+            if (shifted && !shiftLocked) {
                 shifted = false;
                 invalidate();
             }
@@ -448,8 +512,44 @@ public final class KeyboardView extends View {
     }
 
     private int keyAt(float x, float y) {
-        for (int i = 0; i < keys.size(); i++) if (keys.get(i).rect.contains(x, y)) return i;
-        return -1;
+        if (keys.isEmpty()) return -1;
+        float left = Float.MAX_VALUE;
+        float top = Float.MAX_VALUE;
+        float right = -Float.MAX_VALUE;
+        float bottom = -Float.MAX_VALUE;
+        for (Key key : keys) {
+            left = Math.min(left, key.rect.left);
+            top = Math.min(top, key.rect.top);
+            right = Math.max(right, key.rect.right);
+            bottom = Math.max(bottom, key.rect.bottom);
+        }
+        if (x < left || x >= right || y < top || y >= bottom) return -1;
+
+        int best = -1;
+        float bestDistance = Float.MAX_VALUE;
+        float horizontalSlop = dp(3);
+        float verticalSlop = dp(4);
+        for (int i = 0; i < keys.size(); i++) {
+            RectF rect = keys.get(i).rect;
+            if (x < rect.left - horizontalSlop || x >= rect.right + horizontalSlop
+                    || y < rect.top - verticalSlop || y >= rect.bottom + verticalSlop) continue;
+            float dx = Math.max(rect.left - x, Math.max(0, x - rect.right));
+            float dy = Math.max(rect.top - y, Math.max(0, y - rect.bottom));
+            float distance = dx * dx + dy * dy;
+            if (distance < bestDistance) {
+                best = i;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    private boolean isPressed(Key key) {
+        for (int i = 0; i < pointers.size(); i++) {
+            Key pressed = pointers.valueAt(i).key;
+            if (pressed != null && pressed.rect.equals(key.rect)) return true;
+        }
+        return false;
     }
 
     static DeleteRange backspaceFlick(float dx, float dy, float threshold) {
