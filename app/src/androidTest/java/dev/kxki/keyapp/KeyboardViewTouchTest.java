@@ -144,16 +144,28 @@ public final class KeyboardViewTouchTest {
         assertEquals(Arrays.asList(false, true), action.spaces);
     }
 
-    @Test public void longPressSpaceMovesOnBothAxesAndDoesNotTypeSpace() throws Exception {
+    @Test public void longPressSpaceAcceleratesHorizontalMovementAndDoesNotTypeSpace()
+            throws Exception {
         float[] space = qwertySpaceCenter();
         touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{space});
         Thread.sleep(ViewConfiguration.getLongPressTimeout() + 100L);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-        float[] moved = {space[0] + dp(25), space[1] - dp(13)};
-        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{moved});
-        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{moved});
+        float step = dp(12);
+        float[] horizontal = {space[0] + 2 * step, space[1] + step};
+        float[] vertical = {horizontal[0], horizontal[1] + 2 * step};
+        float[] tied = {vertical[0] + step, vertical[1] + step};
+        float[] medium = {tied[0] + 2 * step, tied[1]};
+        float[] fastest = {medium[0] + 2 * step, medium[1]};
+        long time = SystemClock.uptimeMillis() + 1000;
+        touchAt(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{horizontal}, time);
+        touchAt(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{vertical}, time + 1);
+        touchAt(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{tied}, time + 1001);
+        touchAt(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{medium}, time + 1028);
+        touchAt(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{fastest}, time + 1029);
+        touchAt(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{fastest}, time + 1030);
 
-        assertEquals(Arrays.asList("2,-1"), action.cursorMoves);
+        assertEquals(Arrays.asList("2,0", "0,2", "1,0", "5,0", "6,0"),
+                action.cursorMoves);
         assertEquals(0, action.spaces.size());
     }
 
@@ -352,8 +364,12 @@ public final class KeyboardViewTouchTest {
     }
 
     private void touch(int eventAction, int[] ids, float[][] points) {
+        touchAt(eventAction, ids, points, SystemClock.uptimeMillis());
+    }
+
+    private void touchAt(int eventAction, int[] ids, float[][] points, long eventTime) {
         if ((eventAction & MotionEvent.ACTION_MASK) == MotionEvent.ACTION_DOWN) {
-            downTime = SystemClock.uptimeMillis();
+            downTime = eventTime;
         }
         MotionEvent.PointerProperties[] properties = new MotionEvent.PointerProperties[ids.length];
         MotionEvent.PointerCoords[] coordinates = new MotionEvent.PointerCoords[ids.length];
@@ -367,7 +383,7 @@ public final class KeyboardViewTouchTest {
             coordinates[i].pressure = 1;
             coordinates[i].size = 1;
         }
-        MotionEvent event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), eventAction,
+        MotionEvent event = MotionEvent.obtain(downTime, eventTime, eventAction,
                 ids.length, properties, coordinates, 0, 0, 1, 1, 0, 0,
                 InputDevice.SOURCE_TOUCHSCREEN, 0);
         onMain(() -> view.onTouchEvent(event));

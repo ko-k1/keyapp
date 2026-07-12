@@ -177,17 +177,8 @@ public final class KeyAppImeService extends InputMethodService
     }
 
     @Override public void onEditorAction(long token) {
-        InputConnection connection = connection(token);
-        if (connection == null) return;
-        EditorInfo info = getCurrentInputEditorInfo();
-        int action = info == null ? EditorInfo.IME_ACTION_UNSPECIFIED
-                : info.imeOptions & EditorInfo.IME_MASK_ACTION;
-        if (action != EditorInfo.IME_ACTION_UNSPECIFIED && action != EditorInfo.IME_ACTION_NONE
-                && info != null && (info.imeOptions & EditorInfo.IME_FLAG_NO_ENTER_ACTION) == 0) {
-            connection.performEditorAction(action);
-        } else {
-            connection.commitText("\n", 1);
-        }
+        if (connection(token) == null) return;
+        sendKeyChar('\n');
     }
 
     @Override public void onEditorCursorMove(long token, int horizontal, int vertical) {

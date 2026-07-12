@@ -7,6 +7,7 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.SparseArray;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
@@ -58,6 +59,7 @@ public final class KeyboardView extends View {
     private static final float CANDIDATE_BAR_DP = 40f;
     private static final float EXPANDED_CANDIDATES_DP = 116f;
     private static final float CURSOR_STEP_DP = 12f;
+    private static final float CURSOR_ACCELERATION_DP_PER_SECOND = 1200f;
     private static final float FLICK_THRESHOLD_DP = 20f;
     private static final float FLICK_TILE_DP = 48f;
     static final int DEFAULT_KEY_GAP_DP = 3;
@@ -149,6 +151,8 @@ public final class KeyboardView extends View {
         boolean clipboardDrag;
         float cursorX;
         float cursorY;
+        float cursorEventX;
+        long cursorEventTime;
         float clipboardY;
         Runnable repeat;
         Runnable shiftLongPress;
@@ -158,7 +162,8 @@ public final class KeyboardView extends View {
         boolean flickPreview;
         boolean flickGuide;
 
-        PointerState(Key key, float x, float y, boolean candidate, boolean candidateStrip) {
+        PointerState(Key key, float x, float y, long eventTime, boolean candidate,
+                boolean candidateStrip) {
             this.key = key;
             this.downX = x;
             this.downY = y;
@@ -168,6 +173,8 @@ public final class KeyboardView extends View {
             this.candidateY = y;
             this.cursorX = x;
             this.cursorY = y;
+            this.cursorEventX = x;
+            this.cursorEventTime = eventTime;
             this.clipboardY = y;
         }
     }
@@ -684,7 +691,7 @@ public final class KeyboardView extends View {
                 && y < candidateAreaHeight() && japanese && !candidates.isEmpty();
         int keyIndex = candidate ? -1 : keyAt(x, y);
         PointerState state = new PointerState(keyIndex < 0 ? null : keys.get(keyIndex), x, y,
-                candidate, candidate && y < dp(CANDIDATE_BAR_DP));
+                event.getEventTime(), candidate, candidate && y < dp(CANDIDATE_BAR_DP));
         pointers.put(id, state);
         if (candidate) candidatePointerId = id;
         if (state.key != null && "#del".equals(state.key.value)) {
@@ -716,6 +723,8 @@ public final class KeyboardView extends View {
                 candidatePointerId = MotionEvent.INVALID_POINTER_ID;
                 cursorPointerId = id;
                 state.cursorMode = true;
+                state.cursorEventX = state.cursorX;
+                state.cursorEventTime = SystemClock.uptimeMillis();
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
                 invalidate();
             };
@@ -744,7 +753,7 @@ public final class KeyboardView extends View {
             float x = event.getX(i);
             float y = event.getY(i);
             if (state.cursorMode) {
-                moveCursor(state, x, y);
+                moveCursor(state, x, y, event.getEventTime());
                 continue;
             }
             if (clipboard && state.key != null && state.key.value.startsWith("#clipboard:")) {
@@ -801,7 +810,7 @@ public final class KeyboardView extends View {
         cancelCallbacks(state);
         pointers.remove(id);
         if (state.cursorMode) {
-            moveCursor(state, x, y);
+            moveCursor(state, x, y, event.getEventTime());
             cursorPointerId = MotionEvent.INVALID_POINTER_ID;
         } else if (state.candidate) {
             if (candidatePointerId == id) candidatePointerId = MotionEvent.INVALID_POINTER_ID;
@@ -830,14 +839,33 @@ public final class KeyboardView extends View {
         invalidate();
     }
 
-    private void moveCursor(PointerState state, float x, float y) {
+    private void moveCursor(PointerState state, float x, float y, long eventTime) {
         float step = dp(CURSOR_STEP_DP);
-        int horizontal = (int) ((x - state.cursorX) / step);
-        int vertical = (int) ((y - state.cursorY) / step);
-        if (horizontal == 0 && vertical == 0) return;
-        state.cursorX += horizontal * step;
-        state.cursorY += vertical * step;
-        if (action != null) action.onCursorMove(horizontal, vertical);
+        float dx = x - state.cursorX;
+        float dy = y - state.cursorY;
+        long elapsed = eventTime - state.cursorEventTime;
+        float horizontalSpeed = elapsed > 0
+                ? Math.abs(x - state.cursorEventX) * 1000f / elapsed : 0;
+        state.cursorEventX = x;
+        state.cursorEventTime = eventTime;
+        if (Math.abs(dx) >= Math.abs(dy)) {
+            int horizontal = (int) (dx / step);
+            if (horizontal == 0) return;
+            state.cursorX += horizontal * step;
+            state.cursorY = y;
+            float speed = Math.min(1f,
+                    horizontalSpeed / dp(CURSOR_ACCELERATION_DP_PER_SECOND));
+            float acceleration = 1f + 2f * speed * speed * (3f - 2f * speed);
+            int accelerated = Math.round(Math.abs(horizontal) * acceleration)
+                    * Integer.signum(horizontal);
+            if (action != null) action.onCursorMove(accelerated, 0);
+        } else {
+            int vertical = (int) (dy / step);
+            if (vertical == 0) return;
+            state.cursorX = x;
+            state.cursorY += vertical * step;
+            if (action != null) action.onCursorMove(0, vertical);
+        }
     }
 
     @Override public boolean performClick() {
