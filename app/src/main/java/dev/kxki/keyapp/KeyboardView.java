@@ -58,6 +58,10 @@ public final class KeyboardView extends View {
     private static final float CANDIDATE_BAR_DP = 40f;
     private static final float EXPANDED_CANDIDATES_DP = 116f;
     private static final float CURSOR_STEP_DP = 12f;
+    static final int DEFAULT_KEY_GAP_DP = 3;
+    static final int DEFAULT_KEY_RADIUS_DP = 4;
+    static final int MAX_KEY_GAP_DP = 12;
+    static final int MAX_KEY_RADIUS_DP = 24;
     private static final int HIGHLIGHT_COLOR = 0xff50506e;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -90,6 +94,8 @@ public final class KeyboardView extends View {
     private int availableHeightDp = Integer.MAX_VALUE;
     private int availableWidthDp = Integer.MAX_VALUE;
     private int measuredBottomGapDp;
+    private int keyGapDp = DEFAULT_KEY_GAP_DP;
+    private int keyRadiusDp = DEFAULT_KEY_RADIUS_DP;
     private boolean resizeMode;
     private int resizePointerId = MotionEvent.INVALID_POINTER_ID;
     private int resizeEdges;
@@ -186,6 +192,12 @@ public final class KeyboardView extends View {
     int getKeyboardLeftDp() { return keyboardLeftDp; }
     int getKeyboardBottomGapDp() { return bottomGapDp; }
 
+    void setKeyStyle(int gapDp, int radiusDp) {
+        keyGapDp = clamp(gapDp, 0, MAX_KEY_GAP_DP);
+        keyRadiusDp = clamp(radiusDp, 0, MAX_KEY_RADIUS_DP);
+        invalidate();
+    }
+
     void setResizeMode(boolean enabled) {
         resizeMode = enabled;
         cancelPointers();
@@ -265,7 +277,7 @@ public final class KeyboardView extends View {
             boolean shift = "#shift".equals(key.value);
             boolean highlighted = shift ? shiftLocked : isPressed(key);
             paint.setColor(highlighted ? HIGHLIGHT_COLOR : Color.argb(190, 50, 50, 65));
-            canvas.drawRoundRect(key.rect, dp(12), dp(12), paint);
+            canvas.drawRoundRect(key.rect, dp(keyRadiusDp), dp(keyRadiusDp), paint);
             paint.setColor(highlighted ? Color.WHITE : Color.rgb(220, 220, 230));
             paint.setTextAlign(Paint.Align.CENTER);
             String label = cursorPointerId == MotionEvent.INVALID_POINTER_ID ? key.label : "";
@@ -451,7 +463,7 @@ public final class KeyboardView extends View {
     }
 
     private void addRow(int width, float top, String[] labels, String[] values) {
-        float gap = dp(6);
+        float gap = dp(keyGapDp);
         float x = keyboardLeft() + dp(12);
         float keyWidth = (width - dp(24) - gap * (labels.length - 1)) / labels.length;
         for (int i = 0; i < labels.length; i++) {
@@ -461,7 +473,7 @@ public final class KeyboardView extends View {
     }
 
     private void addSpaceRow(int width, float top, String[] leftLabels, String[] leftValues, String centerLabel, String centerValue, String[] rightLabels, String[] rightValues) {
-        float gap = dp(6);
+        float gap = dp(keyGapDp);
         float keyWidth = (width - dp(24) - gap * (leftLabels.length + rightLabels.length)) / (leftLabels.length + rightLabels.length + 4);
         float x = keyboardLeft() + dp(12);
         for (int i = 0; i < leftLabels.length; i++) {
@@ -600,10 +612,10 @@ public final class KeyboardView extends View {
     private float keyHeight() {
         float top = candidateAreaHeight() + dp(8);
         return Math.max(dp(24),
-                (keyboardBoundary() - dp(12) - top - dp(24)) / 4f);
+                (keyboardBoundary() - dp(12) - top - dp(keyGapDp) * 3) / 4f);
     }
 
-    private float keyPitch() { return keyHeight() + dp(8); }
+    private float keyPitch() { return keyHeight() + dp(keyGapDp); }
 
     private void startPointer(MotionEvent event, int index) {
         if (cursorPointerId != MotionEvent.INVALID_POINTER_ID) return;

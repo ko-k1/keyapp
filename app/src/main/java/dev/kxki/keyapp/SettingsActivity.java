@@ -9,6 +9,8 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -45,6 +47,11 @@ public final class SettingsActivity extends Activity {
                 preferences.edit().putBoolean(KeyAppImeService.MANUAL_PRIVATE, checked).apply());
         root.addView(privacy);
 
+        addSlider(root, preferences, R.string.key_spacing, KeyAppImeService.KEY_GAP,
+                KeyboardView.DEFAULT_KEY_GAP_DP, KeyboardView.MAX_KEY_GAP_DP);
+        addSlider(root, preferences, R.string.key_roundness, KeyAppImeService.KEY_RADIUS,
+                KeyboardView.DEFAULT_KEY_RADIUS_DP, KeyboardView.MAX_KEY_RADIUS_DP);
+
         Button resize = new Button(this);
         resize.setText(R.string.resize_keyboard);
         resize.setOnClickListener(view ->
@@ -71,7 +78,31 @@ public final class SettingsActivity extends Activity {
         settings.setOnClickListener(view ->
                 startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
         root.addView(settings);
-        setContentView(root);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(root);
+        setContentView(scroll);
+    }
+
+    private void addSlider(LinearLayout root, SharedPreferences preferences, int labelResource,
+            String preference, int defaultValue, int maximum) {
+        TextView label = new TextView(this);
+        SeekBar slider = new SeekBar(this);
+        slider.setMax(maximum);
+        slider.setProgress(preferences.getInt(preference, defaultValue));
+        label.setText(getString(labelResource, slider.getProgress()));
+        slider.setContentDescription(label.getText());
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int value, boolean fromUser) {
+                label.setText(getString(labelResource, value));
+                seekBar.setContentDescription(label.getText());
+                preferences.edit().putInt(preference, value).apply();
+            }
+
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        root.addView(label);
+        root.addView(slider);
     }
 
     private void clearLearning(Button button) {

@@ -60,10 +60,10 @@ public final class KeyboardViewTouchTest {
 
     @Test public void gapMidpointsHitKeysButOuterMarginDoesNot() {
         float top = keyboardTop();
-        float gap = dp(6);
+        float gap = dp(3);
         float keyWidth = (keyboardWidth() - dp(24) - gap * 9) / 10f;
         float horizontalMidpoint = keyboardLeft() + dp(12) + keyWidth + gap / 2f;
-        float verticalMidpoint = top + keyHeight() + dp(4);
+        float verticalMidpoint = top + keyHeight() + gap / 2f;
 
         tap(horizontalMidpoint, top + dp(21));
         tap(qCenter()[0], verticalMidpoint);
@@ -197,7 +197,7 @@ public final class KeyboardViewTouchTest {
         assertEquals(background, colorAt(dp(5), dp(100)));
         assertEquals(background, colorAt(WIDTH - dp(5), dp(100)));
         assertEquals(background, colorAt(keyboardLeft() + dp(10), dp(380)));
-        assertEquals(dp(8), Math.round(keyPitch() - keyHeight()));
+        assertEquals(dp(3), Math.round(keyPitch() - keyHeight()));
         assertEquals(dp(48), Math.round(keyboardTop()));
 
         onMain(() -> view.setResizeMode(true));
@@ -295,49 +295,49 @@ public final class KeyboardViewTouchTest {
     private float[] qCenter() { return firstRowCenter(0); }
 
     private float[] firstRowCenter(int index) {
-        float gap = dp(6);
+        float gap = dp(3);
         float keyWidth = (keyboardWidth() - dp(24) - gap * 9) / 10f;
         return new float[]{keyboardLeft() + dp(12)
                 + index * (keyWidth + gap) + keyWidth / 2f, rowCenter(0)};
     }
 
     private float[] thirdRowCenter(int index) {
-        float gap = dp(6);
+        float gap = dp(3);
         float keyWidth = (keyboardWidth() - dp(24) - gap * 8) / 9f;
         return new float[]{keyboardLeft() + dp(12)
                 + index * (keyWidth + gap) + keyWidth / 2f, rowCenter(2)};
     }
 
     private float[] japaneseKeyCenter() {
-        float gap = dp(6);
+        float gap = dp(3);
         float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 8f;
         return new float[]{keyboardLeft() + dp(12) + keyWidth + gap + keyWidth / 2f,
                 rowCenter(3)};
     }
 
     private float[] qwertySpaceCenter() {
-        float gap = dp(6);
+        float gap = dp(3);
         float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 8f;
         return new float[]{keyboardLeft() + dp(12)
                 + 2 * (keyWidth + gap) + keyWidth * 2, rowCenter(3)};
     }
 
     private float[] japaneseSpaceCenter() {
-        float gap = dp(6);
+        float gap = dp(3);
         float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 5f;
         return new float[]{keyboardLeft() + dp(12)
                 + 4 * (keyWidth + gap) + keyWidth / 2f, rowCenter(1)};
     }
 
     private float[] qwertyClipboardCenter() {
-        float gap = dp(6);
+        float gap = dp(3);
         float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 8f;
         return new float[]{keyboardLeft() + dp(12) + keyWidth * 6.5f + gap * 3,
                 rowCenter(3)};
     }
 
     private float[] clipboardControlCenter(int index) {
-        float gap = dp(6);
+        float gap = dp(3);
         float keyWidth = (keyboardWidth() - dp(24) - gap * 2) / 3f;
         return new float[]{keyboardLeft() + dp(12)
                 + index * (keyWidth + gap) + keyWidth / 2f, rowCenter(0)};
@@ -348,9 +348,9 @@ public final class KeyboardViewTouchTest {
     private float keyboardLeft() { return dp(view.getKeyboardLeftDp()); }
     private float keyboardWidth() { return dp(view.getKeyboardWidthDp()); }
     private float keyHeight() {
-        return (dp(view.getKeyboardHeightDp()) - dp(12) - keyboardTop() - dp(24)) / 4f;
+        return (dp(view.getKeyboardHeightDp()) - dp(12) - keyboardTop() - dp(9)) / 4f;
     }
-    private float keyPitch() { return keyHeight() + dp(8); }
+    private float keyPitch() { return keyHeight() + dp(3); }
     private float rowCenter(int row) { return keyboardTop() + keyPitch() * row + keyHeight() / 2f; }
 
     private int pxToDp(int value) { return Math.round(value / density); }

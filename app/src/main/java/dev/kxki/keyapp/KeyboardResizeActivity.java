@@ -39,6 +39,7 @@ public final class KeyboardResizeActivity extends Activity {
 
         keyboard = new KeyboardView(this);
         keyboard.setResizeMode(true);
+        KeyAppImeService.loadKeyboardStyle(this, keyboard);
         keyboard.setKeyboardFrame(loadWidth(this), loadHeight(this), loadLeft(this),
                 loadBottomGap(this));
         FrameLayout.LayoutParams keyboardLayout = new FrameLayout.LayoutParams(

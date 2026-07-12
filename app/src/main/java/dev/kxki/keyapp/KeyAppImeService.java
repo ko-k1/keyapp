@@ -25,6 +25,8 @@ public final class KeyAppImeService extends InputMethodService
         implements KeyboardView.OnKeyboardAction, JapaneseImeController.Listener {
     static final String PREFERENCES = "keyapp";
     static final String MANUAL_PRIVATE = "manual_private";
+    static final String KEY_GAP = "key_gap";
+    static final String KEY_RADIUS = "key_radius";
     private static final String CLIPBOARD_COUNT = "clipboard_count";
     private static final String CLIPBOARD_ITEM = "clipboard_item_";
 
@@ -53,6 +55,7 @@ public final class KeyAppImeService extends InputMethodService
         keyboard = new KeyboardView(this);
         keyboard.setAction(this);
         keyboard.setClipboardHistory(clipboardHistory);
+        loadKeyboardStyle(this, keyboard);
         loadKeyboardSize();
         if (state != null) applyState(state);
         Window window = getWindow().getWindow();
@@ -66,6 +69,7 @@ public final class KeyAppImeService extends InputMethodService
 
     @Override public void onWindowShown() {
         super.onWindowShown();
+        loadKeyboardStyle(this, keyboard);
         loadKeyboardSize();
     }
 
@@ -276,6 +280,14 @@ public final class KeyAppImeService extends InputMethodService
                 KeyboardResizeActivity.loadHeight(this),
                 KeyboardResizeActivity.loadLeft(this),
                 KeyboardResizeActivity.loadBottomGap(this));
+    }
+
+    static void loadKeyboardStyle(android.content.Context context, KeyboardView keyboard) {
+        if (keyboard == null) return;
+        SharedPreferences preferences = context.getSharedPreferences(PREFERENCES, MODE_PRIVATE);
+        keyboard.setKeyStyle(
+                preferences.getInt(KEY_GAP, KeyboardView.DEFAULT_KEY_GAP_DP),
+                preferences.getInt(KEY_RADIUS, KeyboardView.DEFAULT_KEY_RADIUS_DP));
     }
 
     private static void sendCursorKeys(
