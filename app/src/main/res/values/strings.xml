@@ -2,6 +2,7 @@
     <string name="app_name">KeyApp</string>
     <string name="ime_name">KeyApp Offline Japanese Keyboard</string>
     <string name="always_private">Always use private mode</string>
+    <string name="show_flick_previews">Show Japanese flick previews</string>
     <string name="key_spacing">Key spacing: %1$d dp</string>
     <string name="key_roundness">Corner roundness: %1$d dp</string>
     <string name="resize_keyboard">Resize keyboard</string>

@@ -47,6 +47,13 @@ public final class SettingsActivity extends Activity {
                 preferences.edit().putBoolean(KeyAppImeService.MANUAL_PRIVATE, checked).apply());
         root.addView(privacy);
 
+        Switch flickPreview = new Switch(this);
+        flickPreview.setText(R.string.show_flick_previews);
+        flickPreview.setChecked(preferences.getBoolean(KeyAppImeService.FLICK_PREVIEW, true));
+        flickPreview.setOnCheckedChangeListener((button, checked) ->
+                preferences.edit().putBoolean(KeyAppImeService.FLICK_PREVIEW, checked).apply());
+        root.addView(flickPreview);
+
         addSlider(root, preferences, R.string.key_spacing, KeyAppImeService.KEY_GAP,
                 KeyboardView.DEFAULT_KEY_GAP_DP, KeyboardView.MAX_KEY_GAP_DP);
         addSlider(root, preferences, R.string.key_roundness, KeyAppImeService.KEY_RADIUS,

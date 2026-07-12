@@ -58,11 +58,21 @@ public final class KeyboardView extends View {
     private static final float CANDIDATE_BAR_DP = 40f;
     private static final float EXPANDED_CANDIDATES_DP = 116f;
     private static final float CURSOR_STEP_DP = 12f;
+    private static final float FLICK_THRESHOLD_DP = 20f;
+    private static final float FLICK_TILE_DP = 48f;
     static final int DEFAULT_KEY_GAP_DP = 3;
     static final int DEFAULT_KEY_RADIUS_DP = 4;
     static final int MAX_KEY_GAP_DP = 12;
     static final int MAX_KEY_RADIUS_DP = 24;
     private static final int HIGHLIGHT_COLOR = 0xff50506e;
+    private static final String[][] FLICK_MAP = {
+            {"あ", "い", "う", "え", "お"}, {"か", "き", "く", "け", "こ"},
+            {"さ", "し", "す", "せ", "そ"}, {"た", "ち", "つ", "て", "と"},
+            {"な", "に", "ぬ", "ね", "の"}, {"は", "ひ", "ふ", "へ", "ほ"},
+            {"ま", "み", "む", "め", "も"}, {"や", "ゆ", "よ", "や", "よ"},
+            {"ら", "り", "る", "れ", "ろ"}, {"わ", "を", "ん", "ー", "わ"},
+            {"、", "。", "？", "！", "・"}
+    };
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final List<Key> keys = new ArrayList<>();
@@ -79,6 +89,7 @@ public final class KeyboardView extends View {
     private boolean candidatesExpanded;
     private boolean engineAvailable;
     private boolean privateMode;
+    private boolean flickPreviewEnabled = true;
     private int candidateScroll;
     private float candidateStripScroll;
     private float candidateStripMaxScroll;
@@ -142,6 +153,10 @@ public final class KeyboardView extends View {
         Runnable repeat;
         Runnable shiftLongPress;
         Runnable spaceLongPress;
+        Runnable flickLongPress;
+        String[] flicks;
+        boolean flickPreview;
+        boolean flickGuide;
 
         PointerState(Key key, float x, float y, boolean candidate, boolean candidateStrip) {
             this.key = key;
@@ -195,6 +210,19 @@ public final class KeyboardView extends View {
     void setKeyStyle(int gapDp, int radiusDp) {
         keyGapDp = clamp(gapDp, 0, MAX_KEY_GAP_DP);
         keyRadiusDp = clamp(radiusDp, 0, MAX_KEY_RADIUS_DP);
+        invalidate();
+    }
+
+    void setFlickPreviewEnabled(boolean enabled) {
+        flickPreviewEnabled = enabled;
+        if (!enabled) {
+            for (int i = 0; i < pointers.size(); i++) {
+                PointerState state = pointers.valueAt(i);
+                if (state.flickLongPress != null) repeatHandler.removeCallbacks(state.flickLongPress);
+                state.flickPreview = false;
+                state.flickGuide = false;
+            }
+        }
         invalidate();
     }
 
@@ -284,7 +312,36 @@ public final class KeyboardView extends View {
             paint.setTextSize(dp(label.length() > 2 ? 14 : 18));
             canvas.drawText(label, key.rect.centerX(), centeredY(key.rect.centerY()), paint);
         }
+        drawFlickPreviews(canvas);
         if (resizeMode) drawResizeHandles(canvas);
+    }
+
+    private void drawFlickPreviews(Canvas canvas) {
+        float tile = dp(FLICK_TILE_DP);
+        int[] xs = {0, -1, 0, 1, 0};
+        int[] ys = {0, 0, -1, 0, 1};
+        for (int pointer = 0; pointer < pointers.size(); pointer++) {
+            PointerState state = pointers.valueAt(pointer);
+            if (!state.flickPreview || state.flicks == null) continue;
+            float x = clamp(state.key.rect.centerX(), keyboardLeft() + tile * 1.5f,
+                    keyboardRight() - tile * 1.5f);
+            float y = clamp(state.key.rect.centerY(), tile * 1.5f,
+                    keyboardBoundary() - tile * 1.5f);
+            int selected = flickIndex(state.cursorX - state.downX, state.cursorY - state.downY);
+            for (int i = 1; i < state.flicks.length; i++) {
+                if (!state.flickGuide && i != selected) continue;
+                RectF rect = new RectF(x + xs[i] * tile - tile / 2,
+                        y + ys[i] * tile - tile / 2,
+                        x + xs[i] * tile + tile / 2,
+                        y + ys[i] * tile + tile / 2);
+                paint.setColor(i == selected ? HIGHLIGHT_COLOR : Color.argb(190, 50, 50, 65));
+                canvas.drawRoundRect(rect, dp(keyRadiusDp), dp(keyRadiusDp), paint);
+                paint.setColor(i == selected ? Color.WHITE : Color.rgb(220, 220, 230));
+                paint.setTextAlign(Paint.Align.CENTER);
+                paint.setTextSize(dp(i == selected ? 24 : 18));
+                canvas.drawText(state.flicks[i], rect.centerX(), centeredY(rect.centerY()), paint);
+            }
+        }
     }
 
     private void drawResizeHandles(Canvas canvas) {
@@ -664,6 +721,19 @@ public final class KeyboardView extends View {
             };
             repeatHandler.postDelayed(state.spaceLongPress, ViewConfiguration.getLongPressTimeout());
         }
+        if (state.key != null && japanese && !symbols) {
+            state.flicks = flickRow(state.key.value);
+            if (state.flicks != null && flickPreviewEnabled) {
+                state.flickLongPress = () -> {
+                    if (pointers.get(id) != state || !flickPreviewEnabled) return;
+                    state.flickPreview = true;
+                    state.flickGuide = true;
+                    invalidate();
+                };
+                repeatHandler.postDelayed(
+                        state.flickLongPress, ViewConfiguration.getLongPressTimeout());
+            }
+        }
         invalidate();
     }
 
@@ -690,9 +760,14 @@ public final class KeyboardView extends View {
                 continue;
             }
             if (!state.candidate) {
-                if (Math.abs(x - state.downX) + Math.abs(y - state.downY) > dp(20)) cancelCallbacks(state);
+                if (Math.abs(x - state.downX) + Math.abs(y - state.downY)
+                        > dp(FLICK_THRESHOLD_DP)) {
+                    cancelCallbacks(state);
+                    if (state.flicks != null && flickPreviewEnabled) state.flickPreview = true;
+                }
                 state.cursorX = x;
                 state.cursorY = y;
+                if (state.flickPreview) invalidate();
                 continue;
             }
             if (state.candidateStrip) {
@@ -744,6 +819,7 @@ public final class KeyboardView extends View {
         if (state.repeat != null) repeatHandler.removeCallbacks(state.repeat);
         if (state.shiftLongPress != null) repeatHandler.removeCallbacks(state.shiftLongPress);
         if (state.spaceLongPress != null) repeatHandler.removeCallbacks(state.spaceLongPress);
+        if (state.flickLongPress != null) repeatHandler.removeCallbacks(state.flickLongPress);
     }
 
     private void cancelPointers() {
@@ -848,7 +924,7 @@ public final class KeyboardView extends View {
         }
         if (value.isEmpty()) return;
         if (japanese && !symbols && value.length() == 1 && !" ".equals(value)) {
-            action.onKana(flick(value, dx, dy));
+            action.onKana(resolveFlick(value, dx, dy));
         } else if (" ".equals(value)) {
             action.onSpace(japanese && !symbols);
         } else {
@@ -932,19 +1008,19 @@ public final class KeyboardView extends View {
         return dy < 0 ? DeleteRange.TO_END : DeleteRange.TO_START;
     }
 
-    private String flick(String base, float dx, float dy) {
-        String[][] map = {
-                {"あ", "い", "う", "え", "お"}, {"か", "き", "く", "け", "こ"},
-                {"さ", "し", "す", "せ", "そ"}, {"た", "ち", "つ", "て", "と"},
-                {"な", "に", "ぬ", "ね", "の"}, {"は", "ひ", "ふ", "へ", "ほ"},
-                {"ま", "み", "む", "め", "も"}, {"や", "ゆ", "よ", "や", "よ"},
-                {"ら", "り", "る", "れ", "ろ"}, {"わ", "を", "ん", "ー", "わ"},
-                {"、", "。", "？", "！", "・"}
-        };
-        if (Math.abs(dx) + Math.abs(dy) <= dp(20)) return base;
-        int index = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 3 : 1) : (dy > 0 ? 4 : 2);
-        for (String[] row : map) if (row[0].equals(base)) return row[index];
-        return base;
+    private String resolveFlick(String base, float dx, float dy) {
+        String[] row = flickRow(base);
+        return row == null ? base : row[flickIndex(dx, dy)];
+    }
+
+    private int flickIndex(float dx, float dy) {
+        if (Math.abs(dx) + Math.abs(dy) <= dp(FLICK_THRESHOLD_DP)) return 0;
+        return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 3 : 1) : (dy > 0 ? 4 : 2);
+    }
+
+    private static String[] flickRow(String base) {
+        for (String[] row : FLICK_MAP) if (row[0].equals(base)) return row;
+        return null;
     }
 
     private String[] split(String text) {

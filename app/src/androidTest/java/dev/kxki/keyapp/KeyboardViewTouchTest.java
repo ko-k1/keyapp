@@ -2,6 +2,7 @@ package dev.kxki.keyapp;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -169,6 +170,98 @@ public final class KeyboardViewTouchTest {
         assertEquals(0, action.cursorMoves.size());
     }
 
+    @Test public void japaneseFlickPreviewAppearsOnHoldAndTracksEveryDirection()
+            throws Exception {
+        enterJapanese();
+        float[] key = japaneseKeyCenter(2, 1);
+        int hidden = flickTileColor(2, 1, 2);
+
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{key});
+        int center = flickTileColor(2, 1, 0);
+        Thread.sleep(ViewConfiguration.getLongPressTimeout() + 100L);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        assertNotEquals(hidden, flickTileColor(2, 1, 2));
+        assertEquals(center, flickTileColor(2, 1, 0));
+
+        int[] tile = {1, 2, 3, 4};
+        int[][] movement = {{-30, 0}, {0, -30}, {30, 0}, {0, 30}};
+        int selected = 0;
+        for (int i = 0; i < movement.length; i++) {
+            float[] moved = {key[0] + dp(movement[i][0]), key[1] + dp(movement[i][1])};
+            touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{moved});
+            if (i == 0) selected = flickTileColor(2, 1, tile[i]);
+            assertEquals(selected, flickTileColor(2, 1, tile[i]));
+            assertEquals(center, flickTileColor(2, 1, 0));
+        }
+        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{key});
+        assertEquals(center, flickTileColor(2, 1, 0));
+        assertNotEquals(selected, flickTileColor(2, 1, 1));
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{key});
+
+        assertEquals(Arrays.asList("ま"), action.kanas);
+        assertEquals(hidden, flickTileColor(2, 1, 2));
+    }
+
+    @Test public void thresholdPreviewAndOutputStayIndependentOfSetting() {
+        enterJapanese();
+        float[] key = japaneseKeyCenter(0, 2);
+        int hiddenUp = flickTileColor(0, 2, 2);
+        int hiddenRight = flickTileColor(0, 2, 3);
+        float[] right = {key[0] + dp(30), key[1]};
+
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{key});
+        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{right});
+        assertEquals(hiddenUp, flickTileColor(0, 2, 2));
+        assertNotEquals(hiddenRight, flickTileColor(0, 2, 3));
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{right});
+
+        onMain(() -> view.setFlickPreviewEnabled(false));
+        int hiddenLeft = flickTileColor(0, 2, 1);
+        float[] left = {key[0] - dp(30), key[1]};
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{key});
+        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{left});
+        assertEquals(hiddenLeft, flickTileColor(0, 2, 1));
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{left});
+
+        assertEquals(Arrays.asList("け", "き"), action.kanas);
+    }
+
+    @Test public void punctuationPreviewCancelsWithoutDispatch() {
+        enterJapanese();
+        float[] key = japaneseKeyCenter(3, 3);
+        int hidden = flickTileColor(3, 3, 2);
+        float[] up = {key[0], key[1] - dp(30)};
+
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{key});
+        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{up});
+        assertNotEquals(hidden, flickTileColor(3, 3, 2));
+        touch(MotionEvent.ACTION_CANCEL, new int[]{0}, new float[][]{up});
+
+        assertEquals(hidden, flickTileColor(3, 3, 2));
+        assertEquals(0, action.kanas.size());
+    }
+
+    @Test public void japaneseDeleteKeepsRepeatAndDirectionalDeletionWithoutPreview()
+            throws Exception {
+        enterJapanese();
+        float[] key = japaneseKeyCenter(0, 4);
+        int hidden = flickTileColor(0, 4, 2);
+        float[] left = {key[0] - dp(30), key[1]};
+
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{key});
+        touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{left});
+        assertEquals(hidden, flickTileColor(0, 4, 2));
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{left});
+        assertEquals(Arrays.asList(KeyboardView.DeleteRange.ALL), action.deleteRanges);
+
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{key});
+        Thread.sleep(475);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        assertEquals(hidden, flickTileColor(0, 4, 2));
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{key});
+        assertTrue(action.backspaces > 0);
+    }
+
     @Test public void clipboardHistoryPastesScrollsAndClears() {
         onMain(() -> view.setClipboardHistory(
                 Arrays.asList("one", "two", "three", "four", "five")));
@@ -329,6 +422,31 @@ public final class KeyboardViewTouchTest {
                 + 4 * (keyWidth + gap) + keyWidth / 2f, rowCenter(1)};
     }
 
+    private void enterJapanese() {
+        tap(japaneseKeyCenter()[0], japaneseKeyCenter()[1]);
+    }
+
+    private float[] japaneseKeyCenter(int row, int column) {
+        float gap = dp(3);
+        float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 5f;
+        return new float[]{keyboardLeft() + dp(12)
+                + column * (keyWidth + gap) + keyWidth / 2f, rowCenter(row)};
+    }
+
+    private int flickTileColor(int row, int column, int tileIndex) {
+        float[] key = japaneseKeyCenter(row, column);
+        float tile = dp(48);
+        float x = Math.max(keyboardLeft() + tile * 1.5f,
+                Math.min(keyboardLeft() + keyboardWidth() - tile * 1.5f, key[0]));
+        float y = Math.max(tile * 1.5f,
+                Math.min(dp(view.getKeyboardHeightDp()) - tile * 1.5f,
+                        key[1]));
+        int[] xs = {0, -1, 0, 1, 0};
+        int[] ys = {0, 0, -1, 0, 1};
+        return colorAt(x + xs[tileIndex] * tile - dp(16),
+                y + ys[tileIndex] * tile - dp(16));
+    }
+
     private float[] qwertyClipboardCenter() {
         float gap = dp(3);
         float keyWidth = (keyboardWidth() - dp(24) - gap * 4) / 8f;
@@ -367,16 +485,20 @@ public final class KeyboardViewTouchTest {
 
     private static final class RecordingAction implements KeyboardView.OnKeyboardAction {
         final List<String> rawTexts = new ArrayList<>();
+        final List<String> kanas = new ArrayList<>();
         final List<Boolean> spaces = new ArrayList<>();
         final List<String> cursorMoves = new ArrayList<>();
+        final List<KeyboardView.DeleteRange> deleteRanges = new ArrayList<>();
         int backspaces;
         int candidateId = -1;
         int clipboardClears;
 
-        @Override public void onKana(String kana) {}
+        @Override public void onKana(String kana) { kanas.add(kana); }
         @Override public void onKanaModifier() {}
         @Override public void onBackspace(boolean japanese) { backspaces++; }
-        @Override public void onDeleteRange(KeyboardView.DeleteRange range) {}
+        @Override public void onDeleteRange(KeyboardView.DeleteRange range) {
+            deleteRanges.add(range);
+        }
         @Override public void onSpace(boolean japanese) { spaces.add(japanese); }
         @Override public void onCursorMove(int horizontal, int vertical) {
             cursorMoves.add(horizontal + "," + vertical);
