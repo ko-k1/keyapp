@@ -88,6 +88,7 @@ public final class KeyboardView extends View {
     private boolean shifted;
     private boolean shiftLocked;
     private boolean symbols;
+    private boolean numberMode;
     private boolean candidatesExpanded;
     private boolean engineAvailable;
     private boolean privateMode;
@@ -248,6 +249,7 @@ public final class KeyboardView extends View {
         shifted = false;
         shiftLocked = false;
         symbols = false;
+        numberMode = false;
         candidatesExpanded = false;
         candidateScroll = 0;
         candidateStripScroll = 0;
@@ -489,6 +491,8 @@ public final class KeyboardView extends View {
             }
         } else if (symbols) {
             buildSymbols(keyboardWidth, top);
+        } else if (japanese && numberMode) {
+            buildJapaneseNumbers(keyboardWidth, top);
         } else if (japanese) {
             buildJapanese(keyboardWidth, top);
         } else {
@@ -522,8 +526,15 @@ public final class KeyboardView extends View {
     private void buildJapanese(int width, float top) {
         addRow(width, top, new String[]{"clip", "あ", "か", "さ", "⌫"}, new String[]{"#clip", "あ", "か", "さ", "#del"});
         addRow(width, top + keyPitch(), new String[]{"ABC", "た", "な", "は", "space"}, new String[]{"#en", "た", "な", "は", " "});
-        addRow(width, top + keyPitch() * 2, new String[]{"123", "ま", "や", "ら", ""}, new String[]{"#sym", "ま", "や", "ら", ""});
+        addRow(width, top + keyPitch() * 2, new String[]{"123", "ま", "や", "ら", ""}, new String[]{"#num", "ま", "や", "ら", ""});
         addRow(width, top + keyPitch() * 3, new String[]{"", "小", "わ", "、。", "return"}, new String[]{"", "#small", "わ", "、", "#enter"});
+    }
+
+    private void buildJapaneseNumbers(int width, float top) {
+        addRow(width, top, new String[]{"clip", "1", "2", "3", "⌫"}, new String[]{"#clip", "1", "2", "3", "#del"});
+        addRow(width, top + keyPitch(), new String[]{"ABC", "4", "5", "6", "space"}, new String[]{"#en", "4", "5", "6", " "});
+        addRow(width, top + keyPitch() * 2, new String[]{"かな", "7", "8", "9", ","}, new String[]{"#jp", "7", "8", "9", ","});
+        addRow(width, top + keyPitch() * 3, new String[]{"-", ".", "0", "/", "return"}, new String[]{"-", ".", "0", "/", "#enter"});
     }
 
     private void addRow(int width, float top, String[] labels, String[] values) {
@@ -730,7 +741,7 @@ public final class KeyboardView extends View {
             };
             repeatHandler.postDelayed(state.spaceLongPress, ViewConfiguration.getLongPressTimeout());
         }
-        if (state.key != null && japanese && !symbols) {
+        if (state.key != null && japanese && !symbols && !numberMode) {
             state.flicks = flickRow(state.key.value);
             if (state.flicks != null && flickPreviewEnabled) {
                 state.flickLongPress = () -> {
@@ -915,6 +926,17 @@ public final class KeyboardView extends View {
                     action.onJapaneseChanged(false);
                 }
                 symbols = true;
+                numberMode = false;
+                clipboard = false;
+                invalidate();
+                return;
+            case "#num":
+                if (!japanese) {
+                    action.onJapaneseChanged(true);
+                }
+                japanese = true;
+                numberMode = true;
+                symbols = false;
                 clipboard = false;
                 invalidate();
                 return;
@@ -923,11 +945,13 @@ public final class KeyboardView extends View {
                 if (japanese) action.onJapaneseChanged(false);
                 japanese = false;
                 symbols = false;
+                numberMode = false;
                 clipboard = false;
                 invalidate();
                 return;
             case "#jp":
                 symbols = false;
+                numberMode = false;
                 clipboard = false;
                 if (!japanese) action.onJapaneseChanged(true);
                 japanese = true;
@@ -951,6 +975,10 @@ public final class KeyboardView extends View {
             return;
         }
         if (value.isEmpty()) return;
+        if (japanese && numberMode && value.length() == 1 && !" ".equals(value)) {
+            action.onRawText(value);
+            return;
+        }
         if (japanese && !symbols && value.length() == 1 && !" ".equals(value)) {
             action.onKana(resolveFlick(value, dx, dy));
         } else if (" ".equals(value)) {
