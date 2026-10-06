@@ -36,6 +36,7 @@ public final class KeyAppImeService extends InputMethodService
     private JapaneseImeController.State state;
     private long activeToken;
     private boolean forcedPrivate;
+    private boolean manualPrivate;
     private ClipboardManager clipboardManager;
     private ClipboardManager.OnPrimaryClipChangedListener clipboardListener;
     private final List<String> clipboardHistory = new ArrayList<>();
@@ -44,11 +45,15 @@ public final class KeyAppImeService extends InputMethodService
         super.onCreate();
         controller = new JapaneseImeController(this, this);
         loadClipboardHistory();
+        manualPrivate = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
+                .getBoolean(MANUAL_PRIVATE, false);
         clipboardManager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         if (clipboardManager != null) {
             clipboardListener = this::captureClipboard;
             clipboardManager.addPrimaryClipChangedListener(clipboardListener);
-            captureClipboard();
+            // Do not read the system clipboard here: there is no active input yet,
+            // and on Android 12+ every read shows a system overlay. The latest clip
+            // is captured in onStartInput/onWindowShown instead.
         }
     }
 
@@ -72,14 +77,19 @@ public final class KeyAppImeService extends InputMethodService
         super.onWindowShown();
         loadKeyboardStyle(this, keyboard);
         loadKeyboardSize();
+        manualPrivate = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
+                .getBoolean(MANUAL_PRIVATE, false);
+        captureClipboard();
     }
 
     @Override public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
         forcedPrivate = isSensitive(attribute);
         SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
-        activeToken = controller.begin(forcedPrivate || preferences.getBoolean(MANUAL_PRIVATE, false));
+        manualPrivate = preferences.getBoolean(MANUAL_PRIVATE, false);
+        activeToken = controller.begin(forcedPrivate || manualPrivate);
         if (keyboard != null) keyboard.resetForInput();
+        captureClipboard();
     }
 
     @Override public void onFinishInput() {
@@ -118,12 +128,10 @@ public final class KeyAppImeService extends InputMethodService
     @Override public void onCandidate(int candidateId) { controller.selectCandidate(candidateId); }
 
     @Override public void onClipboardClear() {
+        // History-only: never touch the system clipboard here. Wiping the shared
+        // clipboard from a keyboard key is surprising and destructive.
         clipboardHistory.clear();
         saveClipboardHistory();
-        if (clipboardManager != null) {
-            if (Build.VERSION.SDK_INT >= 28) clipboardManager.clearPrimaryClip();
-            else clipboardManager.setPrimaryClip(ClipData.newPlainText("", ""));
-        }
         updateClipboardView();
     }
 
@@ -131,6 +139,7 @@ public final class KeyAppImeService extends InputMethodService
         SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
         boolean manual = !preferences.getBoolean(MANUAL_PRIVATE, false);
         preferences.edit().putBoolean(MANUAL_PRIVATE, manual).apply();
+        manualPrivate = manual;
         controller.setPrivateMode(forcedPrivate || manual);
     }
 
@@ -209,17 +218,24 @@ public final class KeyAppImeService extends InputMethodService
     }
 
     private void captureClipboard() {
-        if (clipboardManager == null || forcedPrivate || state != null && state.privateMode) return;
+        // Synchronous gate: forcedPrivate/manualPrivate are set in onStartInput and
+        // onPrivateModeToggle on the same thread, so unlike controller state they
+        // cannot be stale when a clip changes mid-transition. The panel itself stays
+        // visible in private mode; only capturing is blocked.
+        if (shouldBlockClipboardCapture(forcedPrivate, manualPrivate)
+                || clipboardManager == null) return;
         ClipData clip;
         try {
             clip = clipboardManager.getPrimaryClip();
         } catch (SecurityException ignored) {
             return;
+        } catch (RuntimeException ignored) {
+            return;
         }
-        ClipDescription description = clip == null ? null : clip.getDescription();
-        if (description != null && description.getExtras() != null
-                && description.getExtras().getBoolean(ClipDescription.EXTRA_IS_SENSITIVE)) return;
         if (clip == null) return;
+        ClipDescription description = clip.getDescription();
+        if (isSensitiveClip(description)) return;
+        if (!hasTextMime(description)) return;
         boolean changed = false;
         for (int i = clip.getItemCount() - 1; i >= 0; i--) {
             CharSequence value;
@@ -228,13 +244,9 @@ public final class KeyAppImeService extends InputMethodService
             } catch (RuntimeException ignored) {
                 continue;
             }
-            String text = value == null ? "" : value.toString();
-            if (text.isEmpty()) continue;
-            int previous = clipboardHistory.indexOf(text);
-            if (previous == 0) continue;
-            if (previous > 0) clipboardHistory.remove(previous);
-            clipboardHistory.add(0, text);
-            changed = true;
+            String text = normalizeClipboardText(value == null ? "" : value.toString());
+            if (text == null) continue;
+            changed |= mergeClipboardItem(clipboardHistory, text);
         }
         if (changed) {
             saveClipboardHistory();
@@ -242,12 +254,49 @@ public final class KeyAppImeService extends InputMethodService
         }
     }
 
+    static boolean shouldBlockClipboardCapture(boolean forcedPrivate, boolean manualPrivate) {
+        return ClipboardLogic.shouldBlockCapture(forcedPrivate, manualPrivate);
+    }
+
+    static boolean isSensitiveClip(ClipDescription description) {
+        if (description == null || description.getExtras() == null) return false;
+        // EXTRA_IS_SENSITIVE exists on API 33+. The constant is inlined at compile
+        // time, so this string lookup is safe on older releases where the extra is
+        // simply never present.
+        return description.getExtras().getBoolean(ClipDescription.EXTRA_IS_SENSITIVE);
+    }
+
+    static boolean hasTextMime(ClipDescription description) {
+        if (description == null) return true;
+        if (description.getMimeTypeCount() == 0) return true;
+        return description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)
+                || description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML)
+                || description.hasMimeType(ClipDescription.MIMETYPE_TEXT_URILIST);
+    }
+
+    /** Returns null for empty/whitespace-only clips, otherwise the original text. */
+    static String normalizeClipboardText(String text) {
+        return ClipboardLogic.normalizeText(text);
+    }
+
+    /**
+     * Prepends {@code text} with dedup. Returns true when the history changed.
+     * Index 0 already holding the text means no change.
+     */
+    static boolean mergeClipboardItem(List<String> history, String text) {
+        return ClipboardLogic.mergeItem(history, text);
+    }
+
     private void loadClipboardHistory() {
         SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
         int count = preferences.getInt(CLIPBOARD_COUNT, 0);
         for (int i = 0; i < count; i++) {
             String value = preferences.getString(CLIPBOARD_ITEM + i, "");
-            if (!value.isEmpty() && !clipboardHistory.contains(value)) clipboardHistory.add(value);
+            // normalizeClipboardText rejects null/empty/whitespace-only, dropping
+            // blank rows saved by older versions.
+            String normalized = normalizeClipboardText(value);
+            if (normalized == null) continue;
+            if (!clipboardHistory.contains(normalized)) clipboardHistory.add(normalized);
         }
     }
 

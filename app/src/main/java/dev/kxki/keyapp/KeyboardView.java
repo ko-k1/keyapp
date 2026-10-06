@@ -155,6 +155,7 @@ public final class KeyboardView extends View {
         float cursorEventX;
         long cursorEventTime;
         float clipboardY;
+        String clipboardText;
         Runnable repeat;
         Runnable shiftLongPress;
         Runnable spaceLongPress;
@@ -260,9 +261,27 @@ public final class KeyboardView extends View {
     }
 
     public void setClipboardHistory(List<String> history) {
-        clipboardHistory = history == null ? Collections.emptyList() : new ArrayList<>(history);
-        clipboardScroll = 0;
+        List<String> next = history == null ? Collections.emptyList() : new ArrayList<>(history);
+        List<String> previous = clipboardHistory;
+        clipboardHistory = next;
+        // New head means a fresh clip arrived: jump to top so it is visible.
+        // Otherwise preserve the user's scroll position instead of jumping.
+        if (next.isEmpty() || ClipboardLogic.headChanged(previous, next)) {
+            clipboardScroll = 0;
+        } else {
+            clipboardScroll = clampClipboardScroll(clipboardScroll, clipboardHistory.size());
+        }
         invalidate();
+    }
+
+    static int visibleClipboardRows() { return ClipboardLogic.VISIBLE_ROWS; }
+
+    static int clampClipboardScroll(int scroll, int size) {
+        return ClipboardLogic.clampScroll(scroll, size);
+    }
+
+    static String resolveClipboardPaste(String keyValue, List<String> history, String snapshot) {
+        return ClipboardLogic.resolvePaste(keyValue, history, snapshot);
     }
 
     public void setMozcState(List<Candidate> nextCandidates, boolean available, boolean isPrivate) {
@@ -482,7 +501,8 @@ public final class KeyboardView extends View {
                 addRow(keyboardWidth, top + keyPitch(),
                         new String[]{"Clipboard empty"}, new String[]{""});
             } else {
-                for (int row = 0; row < 3 && clipboardScroll + row < clipboardHistory.size(); row++) {
+                for (int row = 0; row < visibleClipboardRows()
+                        && clipboardScroll + row < clipboardHistory.size(); row++) {
                     int index = clipboardScroll + row;
                     addRow(keyboardWidth, top + keyPitch() * (row + 1),
                             new String[]{clipboardLabel(clipboardHistory.get(index))},
@@ -703,6 +723,19 @@ public final class KeyboardView extends View {
         int keyIndex = candidate ? -1 : keyAt(x, y);
         PointerState state = new PointerState(keyIndex < 0 ? null : keys.get(keyIndex), x, y,
                 event.getEventTime(), candidate, candidate && y < dp(CANDIDATE_BAR_DP));
+        if (clipboard && state.key != null && state.key.value.startsWith("#clipboard:")) {
+            // Snapshot what the user pressed so a history update between DOWN/UP
+            // cannot redirect the paste to a different entry.
+            try {
+                int snapshotIndex =
+                        Integer.parseInt(state.key.value.substring("#clipboard:".length()));
+                if (snapshotIndex >= 0 && snapshotIndex < clipboardHistory.size()) {
+                    state.clipboardText = clipboardHistory.get(snapshotIndex);
+                }
+            } catch (NumberFormatException ignored) {
+                state.clipboardText = null;
+            }
+        }
         pointers.put(id, state);
         if (candidate) candidatePointerId = id;
         if (state.key != null && "#del".equals(state.key.value)) {
@@ -767,16 +800,24 @@ public final class KeyboardView extends View {
                 moveCursor(state, x, y, event.getEventTime());
                 continue;
             }
-            if (clipboard && state.key != null && state.key.value.startsWith("#clipboard:")) {
+            if (clipboard && !state.candidate && !state.cursorMode) {
+                // Scroll from anywhere in clipboard mode so users don't have to
+                // start the drag exactly on a history row. A real scroll suppresses
+                // the tap (including Clear) on release.
                 float delta = y - state.clipboardY;
-                if (Math.abs(y - state.downY) > dp(8)) state.clipboardDrag = true;
+                if (Math.abs(y - state.downY) > dp(12)) state.clipboardDrag = true;
                 int steps = (int) (-delta / dp(32));
                 if (steps != 0) {
-                    clipboardScroll = clamp(clipboardScroll + steps, 0,
-                            Math.max(0, clipboardHistory.size() - 3));
+                    clipboardScroll =
+                            clampClipboardScroll(clipboardScroll + steps, clipboardHistory.size());
                     state.clipboardY += -steps * dp(32);
                     invalidate();
                 }
+                if (state.clipboardDrag) continue;
+                // Not dragging yet: fall through to normal tap handling, but skip
+                // flick tracking which does not apply to clipboard rows.
+                state.cursorX = x;
+                state.cursorY = y;
                 continue;
             }
             if (!state.candidate) {
@@ -827,10 +868,18 @@ public final class KeyboardView extends View {
             if (candidatePointerId == id) candidatePointerId = MotionEvent.INVALID_POINTER_ID;
             performClick();
             handleCandidateTouch(x, y, state.candidateDrag);
-        } else if (!state.clipboardDrag && state.key != null
+        } else if (state.clipboardDrag) {
+            // Vertical scroll: suppress the tap, including Clear.
+        } else if (state.key != null
                 && !(state.shiftLongPressed && "#shift".equals(state.key.value))) {
             performClick();
-            handle(state.key, x - state.downX, y - state.downY);
+            if (state.key.value.startsWith("#clipboard:")) {
+                String text = resolveClipboardPaste(
+                        state.key.value, clipboardHistory, state.clipboardText);
+                if (text != null && action != null) action.onRawText(text);
+            } else {
+                handle(state.key, x - state.downX, y - state.downY);
+            }
         }
         invalidate();
     }
@@ -970,8 +1019,8 @@ public final class KeyboardView extends View {
                 break;
         }
         if (value.startsWith("#clipboard:")) {
-            int index = Integer.parseInt(value.substring("#clipboard:".length()));
-            if (index < clipboardHistory.size()) action.onRawText(clipboardHistory.get(index));
+            String text = resolveClipboardPaste(value, clipboardHistory, null);
+            if (text != null) action.onRawText(text);
             return;
         }
         if (value.isEmpty()) return;
