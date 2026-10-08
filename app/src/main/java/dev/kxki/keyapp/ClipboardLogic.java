@@ -3,17 +3,17 @@ package dev.kxki.keyapp;
 import java.util.List;
 
 /** Pure clipboard helpers without Android dependencies, so they stay unit-testable. */
-final class ClipboardLogic {
+public final class ClipboardLogic {
     static final int VISIBLE_ROWS = 3;
 
     private ClipboardLogic() {}
 
-    static boolean shouldBlockCapture(boolean forcedPrivate, boolean manualPrivate) {
+    public static boolean shouldBlockCapture(boolean forcedPrivate, boolean manualPrivate) {
         return forcedPrivate || manualPrivate;
     }
 
     /** Returns null for null/empty/whitespace-only clips, otherwise the original text. */
-    static String normalizeText(String text) {
+    public static String normalizeText(String text) {
         if (text == null || text.trim().isEmpty()) return null;
         return text;
     }

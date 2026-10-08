@@ -10,4 +10,15 @@
     <string name="clear_learning">Clear learned history and predictions</string>
     <string name="open_source_notices">Open-source notices</string>
     <string name="open_keyboard_settings">Open Android Keyboard Settings</string>
+    <string name="settings_title">KeyApp Keyboard\nOffline Japanese 12-key IME</string>
+    <string name="reset">Reset</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="clear">Clear</string>
+    <string name="close">Close</string>
+    <string name="clear_learning_title">Clear local learning?</string>
+    <string name="clear_learning_message">This removes Mozc history and predictions stored only on this device.</string>
+    <string name="learning_cleared">Local learning cleared</string>
+    <string name="mozc_unavailable">Mozc is unavailable</string>
+    <string name="notices_unavailable">Notices are unavailable</string>
 </resources>

@@ -15,16 +15,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 
+import dev.kxki.keyapp.kana.KanaTable;
+
 /** Serializes Mozc and projects its protocol output into Android edit operations. */
 final class JapaneseImeController implements AutoCloseable {
-    private static final String[] KANA_MODIFIER_CYCLES = {
-            "あぁ", "いぃ", "うぅゔ", "えぇ", "おぉ",
-            "かゕが", "きぎ", "くぐ", "けゖげ", "こご",
-            "さざ", "しじ", "すず", "せぜ", "そぞ",
-            "ただ", "ちぢ", "つっづ", "てで", "とど",
-            "はばぱ", "ひびぴ", "ふぶぷ", "へべぺ", "ほぼぽ",
-            "やゃ", "ゆゅ", "よょ", "わゎ"
-    };
 
     interface Transport {
         boolean open();
@@ -582,36 +576,21 @@ final class JapaneseImeController implements AutoCloseable {
     }
 
     static String transformLast(String text) {
-        if (text.isEmpty()) return text;
-        int start = text.offsetByCodePoints(text.length(), -1);
-        String last = text.substring(start);
-        for (String cycle : KANA_MODIFIER_CYCLES) {
-            int index = cycle.indexOf(last);
-            if (index >= 0) {
-                return text.substring(0, start)
-                        + cycle.charAt((index + 1) % cycle.length());
-            }
-        }
-        return text;
+        return KanaTable.transformLast(text);
     }
 
     private static String transformBeforeCursor(String text, int cursor) {
-        int end = text.offsetByCodePoints(0, clamp(cursor, 0, codePointLength(text)));
-        return transformLast(text.substring(0, end)) + text.substring(end);
+        return KanaTable.transformBeforeCursor(text, cursor);
     }
 
     private static String insertCodePoints(String text, int cursor, String inserted) {
-        int offset = text.offsetByCodePoints(0, clamp(cursor, 0, codePointLength(text)));
-        return text.substring(0, offset) + inserted + text.substring(offset);
+        return KanaTable.insertCodePoints(text, cursor, inserted);
     }
 
     private static String removeCodePointBefore(String text, int cursor) {
-        int end = text.offsetByCodePoints(0, clamp(cursor, 0, codePointLength(text)));
-        if (end == 0) return text;
-        int start = text.offsetByCodePoints(end, -1);
-        return text.substring(0, start) + text.substring(end);
+        return KanaTable.removeCodePointBefore(text, cursor);
     }
 
-    private static int codePointLength(String text) { return text.codePointCount(0, text.length()); }
-    private static int clamp(int value, int min, int max) { return Math.max(min, Math.min(max, value)); }
+    private static int codePointLength(String text) { return KanaTable.codePointLength(text); }
+    private static int clamp(int value, int min, int max) { return KanaTable.clamp(value, min, max); }
 }

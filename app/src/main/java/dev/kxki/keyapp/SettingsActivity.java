@@ -19,6 +19,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Scanner;
 
+import dev.kxki.keyapp.prefs.PrefsKeys;
+
 public final class SettingsActivity extends Activity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -28,7 +30,7 @@ public final class SettingsActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
         TextView title = new TextView(this);
-        title.setText("KeyApp Keyboard\nOffline Japanese 12-key IME");
+        title.setText(R.string.settings_title);
         title.setTextSize(22);
         title.setGravity(Gravity.CENTER);
         root.addView(title);
@@ -39,24 +41,24 @@ public final class SettingsActivity extends Activity {
         root.addView(status);
 
         SharedPreferences preferences =
-                getSharedPreferences(KeyAppImeService.PREFERENCES, MODE_PRIVATE);
+                getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
         Switch privacy = new Switch(this);
         privacy.setText(R.string.always_private);
-        privacy.setChecked(preferences.getBoolean(KeyAppImeService.MANUAL_PRIVATE, false));
+        privacy.setChecked(preferences.getBoolean(PrefsKeys.MANUAL_PRIVATE, false));
         privacy.setOnCheckedChangeListener((button, checked) ->
-                preferences.edit().putBoolean(KeyAppImeService.MANUAL_PRIVATE, checked).apply());
+                preferences.edit().putBoolean(PrefsKeys.MANUAL_PRIVATE, checked).apply());
         root.addView(privacy);
 
         Switch flickPreview = new Switch(this);
         flickPreview.setText(R.string.show_flick_previews);
-        flickPreview.setChecked(preferences.getBoolean(KeyAppImeService.FLICK_PREVIEW, true));
+        flickPreview.setChecked(preferences.getBoolean(PrefsKeys.FLICK_PREVIEW, true));
         flickPreview.setOnCheckedChangeListener((button, checked) ->
-                preferences.edit().putBoolean(KeyAppImeService.FLICK_PREVIEW, checked).apply());
+                preferences.edit().putBoolean(PrefsKeys.FLICK_PREVIEW, checked).apply());
         root.addView(flickPreview);
 
-        addSlider(root, preferences, R.string.key_spacing, KeyAppImeService.KEY_GAP,
+        addSlider(root, preferences, R.string.key_spacing, PrefsKeys.KEY_GAP,
                 KeyboardView.DEFAULT_KEY_GAP_DP, KeyboardView.MAX_KEY_GAP_DP);
-        addSlider(root, preferences, R.string.key_roundness, KeyAppImeService.KEY_RADIUS,
+        addSlider(root, preferences, R.string.key_roundness, PrefsKeys.KEY_RADIUS,
                 KeyboardView.DEFAULT_KEY_RADIUS_DP, KeyboardView.MAX_KEY_RADIUS_DP);
 
         Button resize = new Button(this);
@@ -68,10 +70,10 @@ public final class SettingsActivity extends Activity {
         Button clear = new Button(this);
         clear.setText(R.string.clear_learning);
         clear.setOnClickListener(view -> new AlertDialog.Builder(this)
-                .setTitle("Clear local learning?")
-                .setMessage("This removes Mozc history and predictions stored only on this device.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Clear", (dialog, which) -> clearLearning(clear))
+                .setTitle(R.string.clear_learning_title)
+                .setMessage(R.string.clear_learning_message)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.clear, (dialog, which) -> clearLearning(clear))
                 .show());
         root.addView(clear);
 
@@ -118,7 +120,8 @@ public final class SettingsActivity extends Activity {
             boolean cleared = MozcEngine.clearLearning(getApplicationContext());
             runOnUiThread(() -> {
                 button.setEnabled(true);
-                Toast.makeText(this, cleared ? "Local learning cleared" : "Mozc is unavailable",
+                Toast.makeText(this,
+                        cleared ? R.string.learning_cleared : R.string.mozc_unavailable,
                         Toast.LENGTH_SHORT).show();
             });
         }, "KeyApp-clear-learning").start();
@@ -129,12 +132,12 @@ public final class SettingsActivity extends Activity {
              Scanner scanner = new Scanner(input, "UTF-8").useDelimiter("\\A")) {
             String text = scanner.hasNext() ? scanner.next() : "";
             new AlertDialog.Builder(this)
-                    .setTitle("Open-source notices")
+                    .setTitle(R.string.open_source_notices)
                     .setMessage(text)
-                    .setPositiveButton("Close", null)
+                    .setPositiveButton(R.string.close, null)
                     .show();
         } catch (IOException exception) {
-            Toast.makeText(this, "Notices are unavailable", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, R.string.notices_unavailable, Toast.LENGTH_SHORT).show();
         }
     }
 }

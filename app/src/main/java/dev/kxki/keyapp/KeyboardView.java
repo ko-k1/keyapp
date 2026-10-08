@@ -19,6 +19,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
+import dev.kxki.keyapp.kana.FlickMap;
+import dev.kxki.keyapp.keyboard.KeyboardGeometry;
+
 /** Draws keys and candidates only.  The service owns every composition decision. */
 public final class KeyboardView extends View {
     public enum DeleteRange { TO_END, TO_START, ALL }
@@ -53,28 +56,20 @@ public final class KeyboardView extends View {
     }
 
     private static final float NORMAL_HEIGHT_DP = 300f;
-    private static final int MIN_HEIGHT_DP = 220;
-    private static final int MAX_HEIGHT_DP = 420;
-    private static final int MIN_WIDTH_DP = 280;
+    private static final int MIN_HEIGHT_DP = KeyboardGeometry.MIN_HEIGHT_DP;
+    private static final int MAX_HEIGHT_DP = KeyboardGeometry.MAX_HEIGHT_DP;
+    private static final int MIN_WIDTH_DP = KeyboardGeometry.MIN_WIDTH_DP;
     private static final float CANDIDATE_BAR_DP = 40f;
     private static final float EXPANDED_CANDIDATES_DP = 116f;
     private static final float CURSOR_STEP_DP = 12f;
     private static final float CURSOR_ACCELERATION_DP_PER_SECOND = 1200f;
-    private static final float FLICK_THRESHOLD_DP = 20f;
+    private static final float FLICK_THRESHOLD_DP = FlickMap.FLICK_THRESHOLD_DP;
     private static final float FLICK_TILE_DP = 48f;
-    static final int DEFAULT_KEY_GAP_DP = 3;
-    static final int DEFAULT_KEY_RADIUS_DP = 4;
-    static final int MAX_KEY_GAP_DP = 12;
-    static final int MAX_KEY_RADIUS_DP = 24;
+    public static final int DEFAULT_KEY_GAP_DP = 3;
+    public static final int DEFAULT_KEY_RADIUS_DP = 4;
+    public static final int MAX_KEY_GAP_DP = 12;
+    public static final int MAX_KEY_RADIUS_DP = 24;
     private static final int HIGHLIGHT_COLOR = 0xff50506e;
-    private static final String[][] FLICK_MAP = {
-            {"あ", "い", "う", "え", "お"}, {"か", "き", "く", "け", "こ"},
-            {"さ", "し", "す", "せ", "そ"}, {"た", "ち", "つ", "て", "と"},
-            {"な", "に", "ぬ", "ね", "の"}, {"は", "ひ", "ふ", "へ", "ほ"},
-            {"ま", "み", "む", "め", "も"}, {"や", "ゆ", "よ", "や", "よ"},
-            {"ら", "り", "る", "れ", "ろ"}, {"わ", "を", "ん", "ー", "わ"},
-            {"、", "。", "？", "！", "・"}
-    };
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final List<Key> keys = new ArrayList<>();
@@ -216,13 +211,13 @@ public final class KeyboardView extends View {
     int getKeyboardLeftDp() { return keyboardLeftDp; }
     int getKeyboardBottomGapDp() { return bottomGapDp; }
 
-    void setKeyStyle(int gapDp, int radiusDp) {
+    public void setKeyStyle(int gapDp, int radiusDp) {
         keyGapDp = clamp(gapDp, 0, MAX_KEY_GAP_DP);
         keyRadiusDp = clamp(radiusDp, 0, MAX_KEY_RADIUS_DP);
         invalidate();
     }
 
-    void setFlickPreviewEnabled(boolean enabled) {
+    public void setFlickPreviewEnabled(boolean enabled) {
         flickPreviewEnabled = enabled;
         if (!enabled) {
             for (int i = 0; i < pointers.size(); i++) {
@@ -682,17 +677,16 @@ public final class KeyboardView extends View {
     }
 
     private void constrainFrame() {
-        keyboardHeightDp = clamp(keyboardHeightDp, MIN_HEIGHT_DP, MAX_HEIGHT_DP);
+        keyboardHeightDp = KeyboardGeometry.constrainHeight(keyboardHeightDp);
         if (availableWidthDp != Integer.MAX_VALUE) {
-            keyboardWidthDp = clamp(keyboardWidthDp,
-                    Math.min(MIN_WIDTH_DP, availableWidthDp), availableWidthDp);
-            keyboardLeftDp = clamp(keyboardLeftDp, 0,
-                    Math.max(0, availableWidthDp - keyboardWidthDp));
+            keyboardWidthDp = KeyboardGeometry.constrainWidth(keyboardWidthDp, availableWidthDp);
+            keyboardLeftDp = KeyboardGeometry.constrainLeft(
+                    keyboardLeftDp, keyboardWidthDp, availableWidthDp);
         }
         if (availableHeightDp != Integer.MAX_VALUE) {
             keyboardHeightDp = Math.min(keyboardHeightDp, Math.max(1, availableHeightDp));
-            bottomGapDp = clamp(bottomGapDp, 0,
-                    Math.max(0, availableHeightDp - keyboardHeightDp));
+            bottomGapDp = KeyboardGeometry.constrainBottomGap(
+                    bottomGapDp, keyboardHeightDp, availableHeightDp);
         }
     }
 
@@ -1114,18 +1108,15 @@ public final class KeyboardView extends View {
     }
 
     private String resolveFlick(String base, float dx, float dy) {
-        String[] row = flickRow(base);
-        return row == null ? base : row[flickIndex(dx, dy)];
+        return FlickMap.resolveFlick(base, dx, dy, dp(FLICK_THRESHOLD_DP));
     }
 
     private int flickIndex(float dx, float dy) {
-        if (Math.abs(dx) + Math.abs(dy) <= dp(FLICK_THRESHOLD_DP)) return 0;
-        return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 3 : 1) : (dy > 0 ? 4 : 2);
+        return FlickMap.flickIndex(dx, dy, dp(FLICK_THRESHOLD_DP));
     }
 
     private static String[] flickRow(String base) {
-        for (String[] row : FLICK_MAP) if (row[0].equals(base)) return row;
-        return null;
+        return FlickMap.flickRow(base);
     }
 
     private String[] split(String text) {
@@ -1139,10 +1130,14 @@ public final class KeyboardView extends View {
         return center - (metrics.ascent + metrics.descent) / 2f;
     }
 
-    private int clamp(int value, int min, int max) { return Math.max(min, Math.min(max, value)); }
-    private float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
-    private int pxToDp(float value) {
-        return Math.round(value / getResources().getDisplayMetrics().density);
+    private int clamp(int value, int min, int max) { return KeyboardGeometry.clamp(value, min, max); }
+    private float clamp(float value, float min, float max) {
+        return KeyboardGeometry.clamp(value, min, max);
     }
-    private int dp(float value) { return (int) (value * getResources().getDisplayMetrics().density + .5f); }
+    private int pxToDp(float value) {
+        return KeyboardGeometry.pxToDp(value, getResources().getDisplayMetrics().density);
+    }
+    private int dp(float value) {
+        return KeyboardGeometry.dpToPx(value, getResources().getDisplayMetrics().density);
+    }
 }

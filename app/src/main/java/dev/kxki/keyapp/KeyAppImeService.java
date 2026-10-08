@@ -8,11 +8,6 @@ import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.inputmethodservice.InputMethodService;
 import android.os.Build;
-import android.os.SystemClock;
-import android.text.InputType;
-import android.view.InputDevice;
-import android.view.KeyCharacterMap;
-import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.inputmethod.EditorInfo;
@@ -21,15 +16,14 @@ import android.view.inputmethod.InputConnection;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.kxki.keyapp.clipboard.ClipboardRepository;
+import dev.kxki.keyapp.ime.InputConnectionOps;
+import dev.kxki.keyapp.prefs.KeyboardPrefsRepository;
+import dev.kxki.keyapp.prefs.PrefsKeys;
+import dev.kxki.keyapp.privacy.PrivacyPolicy;
+
 public final class KeyAppImeService extends InputMethodService
         implements KeyboardView.OnKeyboardAction, JapaneseImeController.Listener {
-    static final String PREFERENCES = "keyapp";
-    static final String MANUAL_PRIVATE = "manual_private";
-    static final String KEY_GAP = "key_gap";
-    static final String KEY_RADIUS = "key_radius";
-    static final String FLICK_PREVIEW = "flick_preview";
-    private static final String CLIPBOARD_COUNT = "clipboard_count";
-    private static final String CLIPBOARD_ITEM = "clipboard_item_";
 
     private JapaneseImeController controller;
     private KeyboardView keyboard;
@@ -45,8 +39,8 @@ public final class KeyAppImeService extends InputMethodService
         super.onCreate();
         controller = new JapaneseImeController(this, this);
         loadClipboardHistory();
-        manualPrivate = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
-                .getBoolean(MANUAL_PRIVATE, false);
+        manualPrivate = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE)
+                .getBoolean(PrefsKeys.MANUAL_PRIVATE, false);
         clipboardManager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         if (clipboardManager != null) {
             clipboardListener = this::captureClipboard;
@@ -77,16 +71,16 @@ public final class KeyAppImeService extends InputMethodService
         super.onWindowShown();
         loadKeyboardStyle(this, keyboard);
         loadKeyboardSize();
-        manualPrivate = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
-                .getBoolean(MANUAL_PRIVATE, false);
+        manualPrivate = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE)
+                .getBoolean(PrefsKeys.MANUAL_PRIVATE, false);
         captureClipboard();
     }
 
     @Override public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
         forcedPrivate = isSensitive(attribute);
-        SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
-        manualPrivate = preferences.getBoolean(MANUAL_PRIVATE, false);
+        SharedPreferences preferences = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
+        manualPrivate = preferences.getBoolean(PrefsKeys.MANUAL_PRIVATE, false);
         activeToken = controller.begin(forcedPrivate || manualPrivate);
         if (keyboard != null) keyboard.resetForInput();
         captureClipboard();
@@ -136,9 +130,9 @@ public final class KeyAppImeService extends InputMethodService
     }
 
     @Override public void onPrivateModeToggle() {
-        SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
-        boolean manual = !preferences.getBoolean(MANUAL_PRIVATE, false);
-        preferences.edit().putBoolean(MANUAL_PRIVATE, manual).apply();
+        SharedPreferences preferences = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
+        boolean manual = !preferences.getBoolean(PrefsKeys.MANUAL_PRIVATE, false);
+        preferences.edit().putBoolean(PrefsKeys.MANUAL_PRIVATE, manual).apply();
         manualPrivate = manual;
         controller.setPrivateMode(forcedPrivate || manual);
     }
@@ -193,8 +187,8 @@ public final class KeyAppImeService extends InputMethodService
     @Override public void onEditorCursorMove(long token, int horizontal, int vertical) {
         InputConnection connection = connection(token);
         if (connection == null) return;
-        sendCursorKeys(connection, horizontal, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT);
-        sendCursorKeys(connection, vertical, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN);
+        InputConnectionOps.sendCursorLeftRight(connection, horizontal);
+        InputConnectionOps.sendCursorUpDown(connection, vertical);
     }
 
     @Override public void onState(long token, JapaneseImeController.State next) {
@@ -255,23 +249,18 @@ public final class KeyAppImeService extends InputMethodService
     }
 
     static boolean shouldBlockClipboardCapture(boolean forcedPrivate, boolean manualPrivate) {
-        return ClipboardLogic.shouldBlockCapture(forcedPrivate, manualPrivate);
+        return PrivacyPolicy.shouldBlockCapture(forcedPrivate, manualPrivate);
     }
 
     static boolean isSensitiveClip(ClipDescription description) {
-        if (description == null || description.getExtras() == null) return false;
         // EXTRA_IS_SENSITIVE exists on API 33+. The constant is inlined at compile
         // time, so this string lookup is safe on older releases where the extra is
         // simply never present.
-        return description.getExtras().getBoolean(ClipDescription.EXTRA_IS_SENSITIVE);
+        return PrivacyPolicy.isSensitiveClip(description);
     }
 
     static boolean hasTextMime(ClipDescription description) {
-        if (description == null) return true;
-        if (description.getMimeTypeCount() == 0) return true;
-        return description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)
-                || description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML)
-                || description.hasMimeType(ClipDescription.MIMETYPE_TEXT_URILIST);
+        return PrivacyPolicy.hasTextMime(description);
     }
 
     /** Returns null for empty/whitespace-only clips, otherwise the original text. */
@@ -288,27 +277,13 @@ public final class KeyAppImeService extends InputMethodService
     }
 
     private void loadClipboardHistory() {
-        SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
-        int count = preferences.getInt(CLIPBOARD_COUNT, 0);
-        for (int i = 0; i < count; i++) {
-            String value = preferences.getString(CLIPBOARD_ITEM + i, "");
-            // normalizeClipboardText rejects null/empty/whitespace-only, dropping
-            // blank rows saved by older versions.
-            String normalized = normalizeClipboardText(value);
-            if (normalized == null) continue;
-            if (!clipboardHistory.contains(normalized)) clipboardHistory.add(normalized);
-        }
+        SharedPreferences preferences = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
+        ClipboardRepository.loadInto(clipboardHistory, preferences);
     }
 
     private void saveClipboardHistory() {
-        SharedPreferences preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE);
-        int previous = preferences.getInt(CLIPBOARD_COUNT, 0);
-        SharedPreferences.Editor editor = preferences.edit().putInt(CLIPBOARD_COUNT, clipboardHistory.size());
-        for (int i = 0; i < clipboardHistory.size(); i++) {
-            editor.putString(CLIPBOARD_ITEM + i, clipboardHistory.get(i));
-        }
-        for (int i = clipboardHistory.size(); i < previous; i++) editor.remove(CLIPBOARD_ITEM + i);
-        editor.apply();
+        SharedPreferences preferences = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
+        ClipboardRepository.save(clipboardHistory, preferences);
     }
 
     private void updateClipboardView() {
@@ -325,38 +300,11 @@ public final class KeyAppImeService extends InputMethodService
 
     static void loadKeyboardStyle(android.content.Context context, KeyboardView keyboard) {
         if (keyboard == null) return;
-        SharedPreferences preferences = context.getSharedPreferences(PREFERENCES, MODE_PRIVATE);
-        keyboard.setKeyStyle(
-                preferences.getInt(KEY_GAP, KeyboardView.DEFAULT_KEY_GAP_DP),
-                preferences.getInt(KEY_RADIUS, KeyboardView.DEFAULT_KEY_RADIUS_DP));
-        keyboard.setFlickPreviewEnabled(preferences.getBoolean(FLICK_PREVIEW, true));
-    }
-
-    private static void sendCursorKeys(
-            InputConnection connection, int movement, int negativeKey, int positiveKey) {
-        int keyCode = movement < 0 ? negativeKey : positiveKey;
-        for (int i = 0; i < Math.abs(movement); i++) {
-            long time = SystemClock.uptimeMillis();
-            connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_DOWN, keyCode, 0, 0,
-                    KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_SOFT_KEYBOARD,
-                    InputDevice.SOURCE_KEYBOARD));
-            connection.sendKeyEvent(new KeyEvent(time, time, KeyEvent.ACTION_UP, keyCode, 0, 0,
-                    KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_SOFT_KEYBOARD,
-                    InputDevice.SOURCE_KEYBOARD));
-        }
+        SharedPreferences preferences = context.getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
+        KeyboardPrefsRepository.applyTo(preferences, keyboard);
     }
 
     private static boolean isSensitive(EditorInfo info) {
-        if (info == null) return false;
-        if ((info.imeOptions & EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0) return true;
-        int inputClass = info.inputType & InputType.TYPE_MASK_CLASS;
-        int variation = info.inputType & InputType.TYPE_MASK_VARIATION;
-        if (inputClass == InputType.TYPE_CLASS_NUMBER) {
-            return variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD;
-        }
-        if (inputClass != InputType.TYPE_CLASS_TEXT) return false;
-        return variation == InputType.TYPE_TEXT_VARIATION_PASSWORD
-                || variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-                || variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD;
+        return PrivacyPolicy.isSensitive(info);
     }
 }

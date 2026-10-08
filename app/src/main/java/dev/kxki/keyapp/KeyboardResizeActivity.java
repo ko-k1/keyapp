@@ -2,8 +2,6 @@ package dev.kxki.keyapp;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.SharedPreferences;
-import android.content.res.Configuration;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.ViewGroup;
@@ -12,11 +10,10 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import dev.kxki.keyapp.keyboard.KeyboardGeometry;
+import dev.kxki.keyapp.prefs.KeyboardPrefsRepository;
+
 public final class KeyboardResizeActivity extends Activity {
-    private static final String HEIGHT = "keyboard_height_";
-    private static final String WIDTH = "keyboard_width_";
-    private static final String LEFT = "keyboard_left_";
-    private static final String BOTTOM_GAP = "keyboard_bottom_gap_";
     private KeyboardView keyboard;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -50,15 +47,15 @@ public final class KeyboardResizeActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         LinearLayout controls = new LinearLayout(this);
-        String[] labels = {"Reset", "Cancel", "Save"};
-        for (String label : labels) {
+        int[] labelResources = {R.string.reset, R.string.cancel, R.string.save};
+        for (int labelResource : labelResources) {
             Button button = new Button(this);
-            button.setText(label);
+            button.setText(labelResource);
             controls.addView(button, new LinearLayout.LayoutParams(0,
                     ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-            if ("Reset".equals(label)) button.setOnClickListener(view ->
+            if (labelResource == R.string.reset) button.setOnClickListener(view ->
                     keyboard.setKeyboardFrame(screenWidthDp(this), 300, 0, 0));
-            else if ("Cancel".equals(label)) button.setOnClickListener(view -> finish());
+            else if (labelResource == R.string.cancel) button.setOnClickListener(view -> finish());
             else button.setOnClickListener(view -> save());
         }
         root.addView(controls);
@@ -66,46 +63,35 @@ public final class KeyboardResizeActivity extends Activity {
     }
 
     private void save() {
-        getSharedPreferences(KeyAppImeService.PREFERENCES, MODE_PRIVATE).edit()
-                .putInt(key(WIDTH, this), keyboard.getKeyboardWidthDp())
-                .putInt(key(HEIGHT, this), keyboard.getKeyboardHeightDp())
-                .putInt(key(LEFT, this), keyboard.getKeyboardLeftDp())
-                .putInt(key(BOTTOM_GAP, this), keyboard.getKeyboardBottomGapDp())
-                .apply();
+        KeyboardPrefsRepository.saveFrame(this,
+                keyboard.getKeyboardWidthDp(),
+                keyboard.getKeyboardHeightDp(),
+                keyboard.getKeyboardLeftDp(),
+                keyboard.getKeyboardBottomGapDp());
         finish();
     }
 
     static int loadHeight(Context context) {
-        return preferences(context).getInt(key(HEIGHT, context), 300);
+        return KeyboardPrefsRepository.loadHeight(context, 300);
     }
 
     static int loadWidth(Context context) {
-        return preferences(context).getInt(key(WIDTH, context), screenWidthDp(context));
+        return KeyboardPrefsRepository.loadWidth(context);
     }
 
     static int loadLeft(Context context) {
-        return preferences(context).getInt(key(LEFT, context), 0);
+        return KeyboardPrefsRepository.loadLeft(context);
     }
 
     static int loadBottomGap(Context context) {
-        return preferences(context).getInt(key(BOTTOM_GAP, context), 0);
-    }
-
-    private static SharedPreferences preferences(Context context) {
-        return context.getSharedPreferences(KeyAppImeService.PREFERENCES, MODE_PRIVATE);
-    }
-
-    private static String key(String prefix, Context context) {
-        return prefix + (context.getResources().getConfiguration().orientation
-                == Configuration.ORIENTATION_LANDSCAPE ? "landscape" : "portrait");
+        return KeyboardPrefsRepository.loadBottomGap(context);
     }
 
     private static int screenWidthDp(Context context) {
-        return Math.round(context.getResources().getDisplayMetrics().widthPixels
-                / context.getResources().getDisplayMetrics().density);
+        return KeyboardPrefsRepository.screenWidthDp(context);
     }
 
     private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + .5f);
+        return KeyboardGeometry.dpToPx(value, getResources().getDisplayMetrics().density);
     }
 }
