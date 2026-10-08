@@ -42,6 +42,7 @@ public final class KeyboardViewTouchTest {
         onMain(() -> {
             view = new KeyboardView(context);
             view.setAction(action);
+            view.setKeyFadeEnabled(false);
             view.measure(
                     View.MeasureSpec.makeMeasureSpec(WIDTH, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
@@ -96,17 +97,17 @@ public final class KeyboardViewTouchTest {
         assertEquals(Arrays.asList("q"), action.rawTexts);
     }
 
-    @Test public void shiftHighlightTracksOnlyLongPressLock() throws Exception {
+    @Test public void shiftHighlightTracksPressAndLongPressLock() throws Exception {
         float[] shift = thirdRowCenter(0);
         float sampleY = shift[1] - dp(12);
         int unlocked = colorAt(shift[0], sampleY);
 
-        tap(shift[0], shift[1]);
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{shift});
+        assertNotEquals(unlocked, colorAt(shift[0], sampleY));
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{shift});
         assertEquals(unlocked, colorAt(shift[0], sampleY));
-        tap(shift[0], shift[1]);
 
         touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{shift});
-        assertEquals(unlocked, colorAt(shift[0], sampleY));
         Thread.sleep(ViewConfiguration.getLongPressTimeout() + 100L);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         int locked = colorAt(shift[0], sampleY);
@@ -116,6 +117,53 @@ public final class KeyboardViewTouchTest {
 
         tap(shift[0], shift[1]);
         assertEquals(unlocked, colorAt(shift[0], sampleY));
+    }
+
+    @Test public void keyReleaseFadesOutThenClears() throws Exception {
+        onMain(() -> {
+            view.setKeyFadeEnabled(true);
+            view.setKeyFadeDurationMs(160);
+        });
+        float[] q = qCenter();
+        float sampleY = q[1] - dp(12);
+        int idle = colorAt(q[0], sampleY);
+
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{q});
+        int pressed = colorAt(q[0], sampleY);
+        assertNotEquals(idle, pressed);
+
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{q});
+        int fading = colorAt(q[0], sampleY);
+        assertNotEquals(idle, fading);
+
+        Thread.sleep(400);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        assertEquals(idle, colorAt(q[0], sampleY));
+        assertEquals(Arrays.asList("q"), action.rawTexts);
+    }
+
+    @Test public void candidateReleaseFadesOutThenClears() throws Exception {
+        onMain(() -> {
+            view.setKeyFadeEnabled(true);
+            view.setKeyFadeDurationMs(160);
+        });
+        tap(japaneseKeyCenter()[0], japaneseKeyCenter()[1]);
+        List<KeyboardView.Candidate> candidates = new ArrayList<>();
+        candidates.add(new KeyboardView.Candidate(7, "あい", "", false));
+        onMain(() -> view.setMozcState(candidates, true, false));
+        float sampleX = keyboardLeft() + dp(60);
+        float sampleY = dp(20);
+        int idle = colorAt(sampleX, sampleY);
+
+        float[] point = {sampleX, sampleY};
+        touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{point});
+        touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{point});
+        assertEquals(7, action.candidateId);
+        assertNotEquals(idle, colorAt(sampleX, sampleY));
+
+        Thread.sleep(400);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        assertEquals(idle, colorAt(sampleX, sampleY));
     }
 
     @Test public void candidateStripScrollsThroughEverySuggestion() {

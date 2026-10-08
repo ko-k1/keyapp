@@ -71,12 +71,21 @@ public final class KeyboardView extends View {
     public static final int MAX_KEY_GAP_DP = 12;
     public static final int MAX_KEY_RADIUS_DP = 24;
     private static final int HIGHLIGHT_COLOR = 0xff50506e;
+    private static final long KEY_FADE_DURATION_MS = 160;
+    private static final int MAX_FADES = 10;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final List<KeyLayout.Key> keys = new ArrayList<>();
     private final List<CandidateHit> candidateHits = new ArrayList<>();
     private final Handler repeatHandler = new Handler(Looper.getMainLooper());
     private final SparseArray<PointerState> pointers = new SparseArray<>();
+    private final List<Fade> fades = new ArrayList<>();
+    private long keyFadeDurationMs = KEY_FADE_DURATION_MS;
+    private boolean keyFadeEnabled = true;
+    private final Runnable fadeTick = () -> {
+        int removed = pruneFades();
+        if (!fades.isEmpty() || removed > 0) invalidate();
+    };
     private OnKeyboardAction action;
     private boolean japanese;
     private boolean clipboard;
@@ -175,6 +184,18 @@ public final class KeyboardView extends View {
         }
     }
 
+    private static final class Fade {
+        final RectF rect;
+        final float radiusPx;
+        final long startMs;
+
+        Fade(RectF rect, float radiusPx, long startMs) {
+            this.rect = rect;
+            this.radiusPx = radiusPx;
+            this.startMs = startMs;
+        }
+    }
+
     public KeyboardView(Context context) {
         super(context);
         setBackgroundColor(Color.TRANSPARENT);
@@ -191,6 +212,7 @@ public final class KeyboardView extends View {
         keyboardLeftDp = Math.max(0, leftDp);
         bottomGapDp = Math.max(0, gapDp);
         constrainFrame();
+        clearFades();
         requestLayout();
         invalidate();
     }
@@ -203,6 +225,7 @@ public final class KeyboardView extends View {
     public void setKeyStyle(int gapDp, int radiusDp) {
         keyGapDp = clamp(gapDp, 0, MAX_KEY_GAP_DP);
         keyRadiusDp = clamp(radiusDp, 0, MAX_KEY_RADIUS_DP);
+        clearFades();
         invalidate();
     }
 
@@ -219,15 +242,32 @@ public final class KeyboardView extends View {
         invalidate();
     }
 
+    void setKeyFadeEnabled(boolean enabled) {
+        keyFadeEnabled = enabled;
+        if (!enabled) clearFades();
+    }
+
+    void setKeyFadeDurationMs(long durationMs) {
+        keyFadeDurationMs = Math.max(0, durationMs);
+        if (keyFadeDurationMs <= 0) clearFades();
+    }
+
     void setResizeMode(boolean enabled) {
         resizeMode = enabled;
         cancelPointers();
+        clearFades();
         resizePointerId = MotionEvent.INVALID_POINTER_ID;
         invalidate();
     }
 
+    @Override protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        clearFades();
+    }
+
     public void resetForInput() {
         cancelPointers();
+        clearFades();
         japanese = false;
         clipboard = false;
         clipboardScroll = 0;
@@ -301,22 +341,117 @@ public final class KeyboardView extends View {
         buildKeys();
         paint.setColor(Color.argb(160, 30, 30, 40));
         canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
-        drawCandidateArea(canvas);
+        // Layer order matters: backgrounds, then release-fade overlays, then
+        // labels on top. This mirrors the pressed state (text over highlight);
+        // drawing fades over text buries the char for the first fade frames.
+        layoutCandidateArea();
+        drawCandidateBackgrounds(canvas);
+        drawKeyBackgrounds(canvas);
+        drawFades(canvas);
+        drawCandidateLabels(canvas);
+        drawKeyLabels(canvas);
+        drawFlickPreviews(canvas);
+        if (resizeMode) drawResizeHandles(canvas);
+        if (!fades.isEmpty()) postOnAnimation(fadeTick);
+    }
+
+    private void drawKeyBackgrounds(Canvas canvas) {
         for (int i = 0; i < keys.size(); i++) {
             KeyLayout.Key key = keys.get(i);
             boolean shift = "#shift".equals(key.value);
-            boolean highlighted = shift ? shiftLocked : isPressed(key);
+            boolean highlighted = isPressed(key) || (shift && shiftLocked);
             RectF rect = key.rect();
             paint.setColor(highlighted ? HIGHLIGHT_COLOR : Color.argb(190, 50, 50, 65));
             canvas.drawRoundRect(rect, dp(keyRadiusDp), dp(keyRadiusDp), paint);
-            paint.setColor(highlighted ? Color.WHITE : Color.rgb(220, 220, 230));
+        }
+    }
+
+    private void drawKeyLabels(Canvas canvas) {
+        for (int i = 0; i < keys.size(); i++) {
+            KeyLayout.Key key = keys.get(i);
+            boolean shift = "#shift".equals(key.value);
+            boolean highlighted = isPressed(key) || (shift && shiftLocked);
+            RectF rect = key.rect();
+            // While the release fade animates, the background still looks
+            // highlighted, so ease the label from white to gray with the same
+            // progress instead of snapping it (visible char flash).
+            float fadeProgress = highlighted ? 1f : fadeProgressFor(rect);
+            paint.setColor(fadeProgress >= 1f ? (highlighted ? Color.WHITE : Color.rgb(220, 220, 230))
+                    : blendColors(Color.WHITE, Color.rgb(220, 220, 230), fadeProgress));
             paint.setTextAlign(Paint.Align.CENTER);
             String label = cursorPointerId == MotionEvent.INVALID_POINTER_ID ? key.label : "";
             paint.setTextSize(dp(label.length() > 2 ? 14 : 18));
             canvas.drawText(label, rect.centerX(), centeredY(rect.centerY()), paint);
         }
-        drawFlickPreviews(canvas);
-        if (resizeMode) drawResizeHandles(canvas);
+    }
+
+    private void startFade(RectF source, float radiusPx) {
+        if (!keyFadeEnabled || keyFadeDurationMs <= 0 || source == null) return;
+        if (fades.size() >= MAX_FADES) fades.remove(0);
+        fades.add(new Fade(new RectF(source), radiusPx, SystemClock.uptimeMillis()));
+        repeatHandler.removeCallbacks(fadeTick);
+        repeatHandler.postDelayed(fadeTick, 16);
+    }
+
+    private void drawFades(Canvas canvas) {
+        if (fades.isEmpty()) return;
+        long now = SystemClock.uptimeMillis();
+        for (Fade fade : fades) {
+            float progress = keyFadeDurationMs <= 0
+                    ? 1f : (float) (now - fade.startMs) / keyFadeDurationMs;
+            if (progress < 0) progress = 0;
+            if (progress >= 1) continue;
+            int alpha = Math.round(Color.alpha(HIGHLIGHT_COLOR) * (1f - progress));
+            paint.setColor(Color.argb(alpha, Color.red(HIGHLIGHT_COLOR),
+                    Color.green(HIGHLIGHT_COLOR), Color.blue(HIGHLIGHT_COLOR)));
+            canvas.drawRoundRect(fade.rect, fade.radiusPx, fade.radiusPx, paint);
+        }
+    }
+
+    /** Fade progress 0..1 for the key at this rect, or 1 when not fading. */
+    private float fadeProgressFor(RectF rect) {
+        if (fades.isEmpty() || keyFadeDurationMs <= 0) return 1f;
+        long now = SystemClock.uptimeMillis();
+        // Newest first: rapid re-taps on one key stack fades, and the label
+        // must track the freshest overlay, not the oldest.
+        for (int i = fades.size() - 1; i >= 0; i--) {
+            Fade fade = fades.get(i);
+            if (fade.rect.left == rect.left && fade.rect.top == rect.top
+                    && fade.rect.right == rect.right && fade.rect.bottom == rect.bottom) {
+                float progress = (float) (now - fade.startMs) / keyFadeDurationMs;
+                return Math.min(1f, Math.max(0f, progress));
+            }
+        }
+        return 1f;
+    }
+
+    private static int blendColors(int from, int to, float t) {
+        return Color.argb(
+                Math.round(Color.alpha(from) + (Color.alpha(to) - Color.alpha(from)) * t),
+                Math.round(Color.red(from) + (Color.red(to) - Color.red(from)) * t),
+                Math.round(Color.green(from) + (Color.green(to) - Color.green(from)) * t),
+                Math.round(Color.blue(from) + (Color.blue(to) - Color.blue(from)) * t));
+    }
+
+    private int pruneFades() {
+        if (fades.isEmpty()) return 0;
+        long now = SystemClock.uptimeMillis();
+        int removed = 0;
+        for (int i = fades.size() - 1; i >= 0; i--) {
+            if (now - fades.get(i).startMs >= keyFadeDurationMs) {
+                fades.remove(i);
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    private void clearFades() {
+        if (fades.isEmpty()) return;
+        fades.clear();
+        repeatHandler.removeCallbacks(fadeTick);
+        removeCallbacks(fadeTick);
+        invalidate();
     }
 
     private void drawFlickPreviews(Canvas canvas) {
@@ -368,26 +503,13 @@ public final class KeyboardView extends View {
         canvas.drawCircle(xs[2], ys[1], radius, paint);
     }
 
-    private void drawCandidateArea(Canvas canvas) {
+    /** Settles strip scroll and populates hits. No drawing; runs once per frame. */
+    private void layoutCandidateArea() {
         candidateHits.clear();
-        float bar = dp(CANDIDATE_BAR_DP);
         if (!japanese || candidates.isEmpty()) return;
+        if (!engineAvailable) return;
 
-        paint.setTextAlign(Paint.Align.CENTER);
-        paint.setTextSize(dp(12));
-        paint.setColor(privateMode ? Color.rgb(255, 204, 110) : Color.rgb(180, 190, 210));
-        canvas.drawText(privateMode ? "P" : "p", keyboardLeft() + dp(17),
-                centeredY(bar / 2), paint);
-
-        if (!engineAvailable) {
-            paint.setTextAlign(Paint.Align.LEFT);
-            paint.setColor(Color.rgb(255, 194, 120));
-            paint.setTextSize(dp(13));
-            canvas.drawText("Kana only · Mozc unavailable", keyboardLeft() + dp(36),
-                    centeredY(bar / 2), paint);
-            return;
-        }
-
+        float bar = dp(CANDIDATE_BAR_DP);
         float left = keyboardLeft() + dp(34);
         float right = keyboardRight() - dp(36);
         float availableWidth = right - left;
@@ -414,18 +536,95 @@ public final class KeyboardView extends View {
         revealFocusedCandidate = false;
         candidateStripScroll = clamp(candidateStripScroll, 0, candidateStripMaxScroll);
 
+        float x = left - candidateStripScroll;
+        for (Candidate candidate : candidates) {
+            float width = candidateWidth(candidate);
+            RectF rect = new RectF(x, dp(4), x + width - dp(4), bar - dp(4));
+            if (rect.right > left && rect.left < right) candidateHits.add(new CandidateHit(rect, candidate));
+            x += width;
+        }
+
+        if (!candidatesExpanded) return;
+        float rowHeight = dp(36);
+        float top = bar;
+        float bottom = candidateAreaHeight();
+        int visibleRows = Math.max(1, (int) ((bottom - top) / rowHeight));
+        for (int row = 0; row < visibleRows; row++) {
+            int index = candidateScroll + row;
+            if (index >= candidates.size()) break;
+            Candidate candidate = candidates.get(index);
+            RectF rect = new RectF(keyboardLeft() + dp(8), top + row * rowHeight + dp(2),
+                    keyboardRight() - dp(8), top + (row + 1) * rowHeight - dp(2));
+            candidateHits.add(new CandidateHit(rect, candidate));
+        }
+    }
+
+    private void drawCandidateBackgrounds(Canvas canvas) {
+        if (!japanese || candidates.isEmpty() || !engineAvailable) return;
+        float bar = dp(CANDIDATE_BAR_DP);
+        float left = keyboardLeft() + dp(34);
+        float right = keyboardRight() - dp(36);
+
         canvas.save();
         canvas.clipRect(left, 0, right, bar);
         float x = left - candidateStripScroll;
+        paint.setTextSize(dp(14));
         for (Candidate candidate : candidates) {
             float width = candidateWidth(candidate);
             RectF rect = new RectF(x, dp(4), x + width - dp(4), bar - dp(4));
             paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : Color.argb(120, 68, 68, 92));
             canvas.drawRoundRect(rect, dp(8), dp(8), paint);
+            x += width;
+        }
+        canvas.restore();
+
+        if (!candidatesExpanded) return;
+        float rowHeight = dp(36);
+        float top = bar;
+        float bottom = candidateAreaHeight();
+        int visibleRows = Math.max(1, (int) ((bottom - top) / rowHeight));
+        for (int row = 0; row < visibleRows; row++) {
+            int index = candidateScroll + row;
+            if (index >= candidates.size()) break;
+            Candidate candidate = candidates.get(index);
+            RectF rect = new RectF(keyboardLeft() + dp(8), top + row * rowHeight + dp(2),
+                    keyboardRight() - dp(8), top + (row + 1) * rowHeight - dp(2));
+            paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : Color.argb(140, 68, 68, 92));
+            canvas.drawRoundRect(rect, dp(7), dp(7), paint);
+        }
+    }
+
+    private void drawCandidateLabels(Canvas canvas) {
+        float bar = dp(CANDIDATE_BAR_DP);
+        if (!japanese || candidates.isEmpty()) return;
+
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTextSize(dp(12));
+        paint.setColor(privateMode ? Color.rgb(255, 204, 110) : Color.rgb(180, 190, 210));
+        canvas.drawText(privateMode ? "P" : "p", keyboardLeft() + dp(17),
+                centeredY(bar / 2), paint);
+
+        if (!engineAvailable) {
+            paint.setTextAlign(Paint.Align.LEFT);
+            paint.setColor(Color.rgb(255, 194, 120));
+            paint.setTextSize(dp(13));
+            canvas.drawText("Kana only · Mozc unavailable", keyboardLeft() + dp(36),
+                    centeredY(bar / 2), paint);
+            return;
+        }
+
+        float left = keyboardLeft() + dp(34);
+        float right = keyboardRight() - dp(36);
+        canvas.save();
+        canvas.clipRect(left, 0, right, bar);
+        float x = left - candidateStripScroll;
+        paint.setTextSize(dp(14));
+        for (Candidate candidate : candidates) {
+            float width = candidateWidth(candidate);
+            RectF rect = new RectF(x, dp(4), x + width - dp(4), bar - dp(4));
             paint.setColor(Color.rgb(225, 225, 238));
             paint.setTextAlign(Paint.Align.CENTER);
             canvas.drawText(candidate.value, rect.centerX(), centeredY(rect.centerY()), paint);
-            if (rect.right > left && rect.left < right) candidateHits.add(new CandidateHit(rect, candidate));
             x += width;
         }
         canvas.restore();
@@ -445,8 +644,6 @@ public final class KeyboardView extends View {
             Candidate candidate = candidates.get(index);
             RectF rect = new RectF(keyboardLeft() + dp(8), top + row * rowHeight + dp(2),
                     keyboardRight() - dp(8), top + (row + 1) * rowHeight - dp(2));
-            paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : Color.argb(140, 68, 68, 92));
-            canvas.drawRoundRect(rect, dp(7), dp(7), paint);
             paint.setTextAlign(Paint.Align.LEFT);
             paint.setTextSize(dp(16));
             paint.setColor(Color.rgb(232, 232, 242));
@@ -457,7 +654,6 @@ public final class KeyboardView extends View {
                 paint.setColor(Color.rgb(175, 180, 200));
                 canvas.drawText(candidate.label, rect.right - dp(12), centeredY(rect.centerY()), paint);
             }
-            candidateHits.add(new CandidateHit(rect, candidate));
         }
     }
 
@@ -499,6 +695,7 @@ public final class KeyboardView extends View {
         } else if (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP) {
             finishPointer(event, event.getActionIndex());
         } else if (action == MotionEvent.ACTION_CANCEL) {
+            // Abort in-flight presses only; completed-release fades animate out.
             cancelPointers();
         }
         return true;
@@ -781,6 +978,7 @@ public final class KeyboardView extends View {
             } else {
                 handle(state.key, x - state.downX, y - state.downY);
             }
+            startFade(state.key.rect(), dp(keyRadiusDp));
         }
         invalidate();
     }
@@ -846,6 +1044,7 @@ public final class KeyboardView extends View {
         }
         for (CandidateHit hit : candidateHits) {
             if (hit.rect.contains(x, y)) {
+                startFade(hit.rect, y < dp(CANDIDATE_BAR_DP) ? dp(8) : dp(7));
                 if (action != null) action.onCandidate(hit.candidate.id);
                 return;
             }
