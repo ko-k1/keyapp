@@ -1,8 +1,5 @@
 package dev.kxki.keyapp;
 
-import android.content.ClipData;
-import android.content.ClipDescription;
-import android.content.ClipboardManager;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
@@ -16,46 +13,44 @@ import android.view.inputmethod.InputConnection;
 import java.util.ArrayList;
 import java.util.List;
 
-import dev.kxki.keyapp.clipboard.ClipboardRepository;
+import dev.kxki.keyapp.clipboard.ClipboardCaptureController;
+import dev.kxki.keyapp.ime.ImeCandidate;
+import dev.kxki.keyapp.ime.ImeListener;
+import dev.kxki.keyapp.ime.ImeState;
 import dev.kxki.keyapp.ime.InputConnectionOps;
+import dev.kxki.keyapp.keyboard.DeleteRange;
 import dev.kxki.keyapp.prefs.KeyboardPrefsRepository;
 import dev.kxki.keyapp.prefs.PrefsKeys;
 import dev.kxki.keyapp.privacy.PrivacyPolicy;
 
 public final class KeyAppImeService extends InputMethodService
-        implements KeyboardView.OnKeyboardAction, JapaneseImeController.Listener {
+        implements KeyboardView.OnKeyboardAction, ImeListener {
 
     private JapaneseImeController controller;
     private KeyboardView keyboard;
-    private JapaneseImeController.State state;
+    private ClipboardCaptureController clipboard;
+    private ImeState state;
     private long activeToken;
     private boolean forcedPrivate;
     private boolean manualPrivate;
-    private ClipboardManager clipboardManager;
-    private ClipboardManager.OnPrimaryClipChangedListener clipboardListener;
-    private final List<String> clipboardHistory = new ArrayList<>();
 
     @Override public void onCreate() {
         super.onCreate();
         controller = new JapaneseImeController(this, this);
-        loadClipboardHistory();
-        manualPrivate = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE)
-                .getBoolean(PrefsKeys.MANUAL_PRIVATE, false);
-        clipboardManager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        if (clipboardManager != null) {
-            clipboardListener = this::captureClipboard;
-            clipboardManager.addPrimaryClipChangedListener(clipboardListener);
-            // Do not read the system clipboard here: there is no active input yet,
-            // and on Android 12+ every read shows a system overlay. The latest clip
-            // is captured in onStartInput/onWindowShown instead.
-        }
+        clipboard = new ClipboardCaptureController(this);
+        clipboard.setOnChanged(this::updateClipboardView);
+        clipboard.start();
+        manualPrivate = KeyboardPrefsRepository.isManualPrivate(
+                getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE));
+        clipboard.setPrivate(manualPrivate);
     }
 
     @Override public View onCreateInputView() {
         keyboard = new KeyboardView(this);
         keyboard.setAction(this);
-        keyboard.setClipboardHistory(clipboardHistory);
-        loadKeyboardStyle(this, keyboard);
+        keyboard.setClipboardHistory(clipboard.history());
+        KeyboardPrefsRepository.applyTo(
+                getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE), keyboard);
         loadKeyboardSize();
         if (state != null) applyState(state);
         Window window = getWindow().getWindow();
@@ -69,21 +64,24 @@ public final class KeyAppImeService extends InputMethodService
 
     @Override public void onWindowShown() {
         super.onWindowShown();
-        loadKeyboardStyle(this, keyboard);
+        KeyboardPrefsRepository.applyTo(
+                getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE), keyboard);
         loadKeyboardSize();
-        manualPrivate = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE)
-                .getBoolean(PrefsKeys.MANUAL_PRIVATE, false);
-        captureClipboard();
+        manualPrivate = KeyboardPrefsRepository.isManualPrivate(
+                getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE));
+        clipboard.setPrivate(forcedPrivate || manualPrivate);
+        clipboard.capture();
     }
 
     @Override public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
-        forcedPrivate = isSensitive(attribute);
+        forcedPrivate = PrivacyPolicy.isSensitive(attribute);
         SharedPreferences preferences = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
-        manualPrivate = preferences.getBoolean(PrefsKeys.MANUAL_PRIVATE, false);
+        manualPrivate = KeyboardPrefsRepository.isManualPrivate(preferences);
+        clipboard.setPrivate(forcedPrivate || manualPrivate);
         activeToken = controller.begin(forcedPrivate || manualPrivate);
         if (keyboard != null) keyboard.resetForInput();
-        captureClipboard();
+        clipboard.capture();
     }
 
     @Override public void onFinishInput() {
@@ -101,9 +99,7 @@ public final class KeyAppImeService extends InputMethodService
     }
 
     @Override public void onDestroy() {
-        if (clipboardManager != null && clipboardListener != null) {
-            clipboardManager.removePrimaryClipChangedListener(clipboardListener);
-        }
+        clipboard.stop();
         controller.close();
         super.onDestroy();
     }
@@ -111,7 +107,7 @@ public final class KeyAppImeService extends InputMethodService
     @Override public void onKana(String kana) { controller.kana(kana); }
     @Override public void onKanaModifier() { controller.modifyKana(); }
     @Override public void onBackspace(boolean japanese) { controller.backspace(japanese); }
-    @Override public void onDeleteRange(KeyboardView.DeleteRange range) { controller.deleteRange(range); }
+    @Override public void onDeleteRange(DeleteRange range) { controller.deleteRange(range); }
     @Override public void onSpace(boolean japanese) { controller.space(japanese); }
     @Override public void onCursorMove(int horizontal, int vertical) {
         controller.moveCursor(horizontal, vertical);
@@ -122,35 +118,22 @@ public final class KeyAppImeService extends InputMethodService
     @Override public void onCandidate(int candidateId) { controller.selectCandidate(candidateId); }
 
     @Override public void onClipboardClear() {
-        // History-only: never touch the system clipboard here. Wiping the shared
-        // clipboard from a keyboard key is surprising and destructive.
-        clipboardHistory.clear();
-        saveClipboardHistory();
-        updateClipboardView();
+        clipboard.clearHistory();
     }
 
     @Override public void onPrivateModeToggle() {
         SharedPreferences preferences = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
-        boolean manual = !preferences.getBoolean(PrefsKeys.MANUAL_PRIVATE, false);
-        preferences.edit().putBoolean(PrefsKeys.MANUAL_PRIVATE, manual).apply();
+        boolean manual = !KeyboardPrefsRepository.isManualPrivate(preferences);
+        KeyboardPrefsRepository.setManualPrivate(preferences, manual);
         manualPrivate = manual;
+        clipboard.setPrivate(forcedPrivate || manual);
         controller.setPrivateMode(forcedPrivate || manual);
     }
 
     @Override public void onComposing(long token, String text, int cursor) {
         InputConnection connection = connection(token);
         if (connection == null) return;
-        connection.beginBatchEdit();
-        connection.setComposingText(text, 1);
-        if (cursor < text.codePointCount(0, text.length())) {
-            CharSequence before = connection.getTextBeforeCursor(Integer.MAX_VALUE, 0);
-            if (before != null) {
-                int trailing = text.length() - text.offsetByCodePoints(0, cursor);
-                int position = before.length() - trailing;
-                if (position >= 0) connection.setSelection(position, position);
-            }
-        }
-        connection.endBatchEdit();
+        InputConnectionOps.setComposingText(connection, text, cursor);
     }
 
     @Override public void onCommit(long token, String text) {
@@ -163,15 +146,10 @@ public final class KeyAppImeService extends InputMethodService
         if (connection != null) connection.deleteSurroundingText(length, 0);
     }
 
-    @Override public void onDeleteRange(long token, KeyboardView.DeleteRange range) {
+    @Override public void onDeleteRange(long token, DeleteRange range) {
         InputConnection connection = connection(token);
         if (connection == null) return;
-        CharSequence before = range == KeyboardView.DeleteRange.TO_END
-                ? null : connection.getTextBeforeCursor(Integer.MAX_VALUE, 0);
-        CharSequence after = range == KeyboardView.DeleteRange.TO_START
-                ? null : connection.getTextAfterCursor(Integer.MAX_VALUE, 0);
-        connection.deleteSurroundingText(
-                before == null ? 0 : before.length(), after == null ? 0 : after.length());
+        InputConnectionOps.deleteRange(connection, range);
     }
 
     @Override public void onFinishComposing(long token) {
@@ -191,16 +169,16 @@ public final class KeyAppImeService extends InputMethodService
         InputConnectionOps.sendCursorUpDown(connection, vertical);
     }
 
-    @Override public void onState(long token, JapaneseImeController.State next) {
+    @Override public void onState(long token, ImeState next) {
         if (token != activeToken || activeToken == 0) return;
         state = next;
         applyState(next);
     }
 
-    private void applyState(JapaneseImeController.State next) {
+    private void applyState(ImeState next) {
         if (keyboard == null) return;
         List<KeyboardView.Candidate> display = new ArrayList<>(next.candidates.size());
-        for (JapaneseImeController.Candidate candidate : next.candidates) {
+        for (ImeCandidate candidate : next.candidates) {
             display.add(new KeyboardView.Candidate(
                     candidate.id, candidate.value, candidate.label, candidate.focused));
         }
@@ -211,100 +189,15 @@ public final class KeyAppImeService extends InputMethodService
         return token == activeToken && activeToken != 0 ? getCurrentInputConnection() : null;
     }
 
-    private void captureClipboard() {
-        // Synchronous gate: forcedPrivate/manualPrivate are set in onStartInput and
-        // onPrivateModeToggle on the same thread, so unlike controller state they
-        // cannot be stale when a clip changes mid-transition. The panel itself stays
-        // visible in private mode; only capturing is blocked.
-        if (shouldBlockClipboardCapture(forcedPrivate, manualPrivate)
-                || clipboardManager == null) return;
-        ClipData clip;
-        try {
-            clip = clipboardManager.getPrimaryClip();
-        } catch (SecurityException ignored) {
-            return;
-        } catch (RuntimeException ignored) {
-            return;
-        }
-        if (clip == null) return;
-        ClipDescription description = clip.getDescription();
-        if (isSensitiveClip(description)) return;
-        if (!hasTextMime(description)) return;
-        boolean changed = false;
-        for (int i = clip.getItemCount() - 1; i >= 0; i--) {
-            CharSequence value;
-            try {
-                value = clip.getItemAt(i).coerceToText(this);
-            } catch (RuntimeException ignored) {
-                continue;
-            }
-            String text = normalizeClipboardText(value == null ? "" : value.toString());
-            if (text == null) continue;
-            changed |= mergeClipboardItem(clipboardHistory, text);
-        }
-        if (changed) {
-            saveClipboardHistory();
-            updateClipboardView();
-        }
-    }
-
-    static boolean shouldBlockClipboardCapture(boolean forcedPrivate, boolean manualPrivate) {
-        return PrivacyPolicy.shouldBlockCapture(forcedPrivate, manualPrivate);
-    }
-
-    static boolean isSensitiveClip(ClipDescription description) {
-        // EXTRA_IS_SENSITIVE exists on API 33+. The constant is inlined at compile
-        // time, so this string lookup is safe on older releases where the extra is
-        // simply never present.
-        return PrivacyPolicy.isSensitiveClip(description);
-    }
-
-    static boolean hasTextMime(ClipDescription description) {
-        return PrivacyPolicy.hasTextMime(description);
-    }
-
-    /** Returns null for empty/whitespace-only clips, otherwise the original text. */
-    static String normalizeClipboardText(String text) {
-        return ClipboardLogic.normalizeText(text);
-    }
-
-    /**
-     * Prepends {@code text} with dedup. Returns true when the history changed.
-     * Index 0 already holding the text means no change.
-     */
-    static boolean mergeClipboardItem(List<String> history, String text) {
-        return ClipboardLogic.mergeItem(history, text);
-    }
-
-    private void loadClipboardHistory() {
-        SharedPreferences preferences = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
-        ClipboardRepository.loadInto(clipboardHistory, preferences);
-    }
-
-    private void saveClipboardHistory() {
-        SharedPreferences preferences = getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
-        ClipboardRepository.save(clipboardHistory, preferences);
-    }
-
     private void updateClipboardView() {
-        if (keyboard != null) keyboard.setClipboardHistory(clipboardHistory);
+        if (keyboard != null) keyboard.setClipboardHistory(clipboard.history());
     }
 
     private void loadKeyboardSize() {
         if (keyboard != null) keyboard.setKeyboardFrame(
-                KeyboardResizeActivity.loadWidth(this),
-                KeyboardResizeActivity.loadHeight(this),
-                KeyboardResizeActivity.loadLeft(this),
-                KeyboardResizeActivity.loadBottomGap(this));
-    }
-
-    static void loadKeyboardStyle(android.content.Context context, KeyboardView keyboard) {
-        if (keyboard == null) return;
-        SharedPreferences preferences = context.getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
-        KeyboardPrefsRepository.applyTo(preferences, keyboard);
-    }
-
-    private static boolean isSensitive(EditorInfo info) {
-        return PrivacyPolicy.isSensitive(info);
+                KeyboardPrefsRepository.loadWidth(this),
+                KeyboardPrefsRepository.loadHeight(this, 300),
+                KeyboardPrefsRepository.loadLeft(this),
+                KeyboardPrefsRepository.loadBottomGap(this));
     }
 }

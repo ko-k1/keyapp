@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Scanner;
 
+import dev.kxki.keyapp.prefs.KeyboardPrefsRepository;
 import dev.kxki.keyapp.prefs.PrefsKeys;
 
 public final class SettingsActivity extends Activity {
@@ -44,21 +45,23 @@ public final class SettingsActivity extends Activity {
                 getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
         Switch privacy = new Switch(this);
         privacy.setText(R.string.always_private);
-        privacy.setChecked(preferences.getBoolean(PrefsKeys.MANUAL_PRIVATE, false));
+        privacy.setChecked(KeyboardPrefsRepository.isManualPrivate(preferences));
         privacy.setOnCheckedChangeListener((button, checked) ->
-                preferences.edit().putBoolean(PrefsKeys.MANUAL_PRIVATE, checked).apply());
+                KeyboardPrefsRepository.setManualPrivate(preferences, checked));
         root.addView(privacy);
 
         Switch flickPreview = new Switch(this);
         flickPreview.setText(R.string.show_flick_previews);
-        flickPreview.setChecked(preferences.getBoolean(PrefsKeys.FLICK_PREVIEW, true));
+        flickPreview.setChecked(KeyboardPrefsRepository.flickPreview(preferences, true));
         flickPreview.setOnCheckedChangeListener((button, checked) ->
-                preferences.edit().putBoolean(PrefsKeys.FLICK_PREVIEW, checked).apply());
+                KeyboardPrefsRepository.setFlickPreview(preferences, checked));
         root.addView(flickPreview);
 
-        addSlider(root, preferences, R.string.key_spacing, PrefsKeys.KEY_GAP,
+        addSlider(root, preferences, R.string.key_spacing,
+                KeyboardPrefsRepository.KEY_GAP_SETTING,
                 KeyboardView.DEFAULT_KEY_GAP_DP, KeyboardView.MAX_KEY_GAP_DP);
-        addSlider(root, preferences, R.string.key_roundness, PrefsKeys.KEY_RADIUS,
+        addSlider(root, preferences, R.string.key_roundness,
+                KeyboardPrefsRepository.KEY_RADIUS_SETTING,
                 KeyboardView.DEFAULT_KEY_RADIUS_DP, KeyboardView.MAX_KEY_RADIUS_DP);
 
         Button resize = new Button(this);
@@ -93,18 +96,18 @@ public final class SettingsActivity extends Activity {
     }
 
     private void addSlider(LinearLayout root, SharedPreferences preferences, int labelResource,
-            String preference, int defaultValue, int maximum) {
+            KeyboardPrefsRepository.IntSetting setting, int defaultValue, int maximum) {
         TextView label = new TextView(this);
         SeekBar slider = new SeekBar(this);
         slider.setMax(maximum);
-        slider.setProgress(preferences.getInt(preference, defaultValue));
+        slider.setProgress(setting.get(preferences, defaultValue));
         label.setText(getString(labelResource, slider.getProgress()));
         slider.setContentDescription(label.getText());
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int value, boolean fromUser) {
                 label.setText(getString(labelResource, value));
                 seekBar.setContentDescription(label.getText());
-                preferences.edit().putInt(preference, value).apply();
+                setting.set(preferences, value);
             }
 
             @Override public void onStartTrackingTouch(SeekBar seekBar) {}

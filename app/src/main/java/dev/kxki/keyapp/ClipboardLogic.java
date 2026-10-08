@@ -4,7 +4,8 @@ import java.util.List;
 
 /** Pure clipboard helpers without Android dependencies, so they stay unit-testable. */
 public final class ClipboardLogic {
-    static final int VISIBLE_ROWS = 3;
+    public static final int VISIBLE_ROWS = 3;
+    public static final int MAX_HISTORY = 30;
 
     private ClipboardLogic() {}
 
@@ -22,20 +23,28 @@ public final class ClipboardLogic {
      * Prepends {@code text} with dedup. Returns true when the history changed.
      * Index 0 already holding the text means no change.
      */
-    static boolean mergeItem(List<String> history, String text) {
+    public static boolean mergeItem(List<String> history, String text) {
         int previous = history.indexOf(text);
         if (previous == 0) return false;
         if (previous > 0) history.remove(previous);
         history.add(0, text);
+        while (history.size() > MAX_HISTORY) history.remove(history.size() - 1);
         return true;
     }
 
-    static int clampScroll(int scroll, int size) {
+    public static int clampScroll(int scroll, int size) {
         return Math.max(0, Math.min(scroll, Math.max(0, size - VISIBLE_ROWS)));
     }
 
+    /** Single-line label for a history row, truncated to 24 code points. */
+    public static String clipboardLabel(String value) {
+        String text = value.replace('\n', ' ').replace('\r', ' ').trim();
+        int count = text.codePointCount(0, text.length());
+        return count <= 24 ? text : text.substring(0, text.offsetByCodePoints(0, 24)) + "…";
+    }
+
     /** Returns true when the head changed (fresh clip arrived) and view should jump to top. */
-    static boolean headChanged(List<String> previous, List<String> next) {
+    public static boolean headChanged(List<String> previous, List<String> next) {
         String oldHead = (previous == null || previous.isEmpty()) ? null : previous.get(0);
         String newHead = (next == null || next.isEmpty()) ? null : next.get(0);
         return oldHead == null ? newHead != null : !oldHead.equals(newHead);
@@ -47,7 +56,7 @@ public final class ClipboardLogic {
      * A snapshot no longer in history (e.g. cleared mid-press) cancels the paste
      * instead of resurrecting stale text or redirecting to a different entry.
      */
-    static String resolvePaste(String keyValue, List<String> history, String snapshot) {
+    public static String resolvePaste(String keyValue, List<String> history, String snapshot) {
         if (snapshot != null && !snapshot.isEmpty()) {
             if (history != null && history.contains(snapshot)) return snapshot;
             return null;

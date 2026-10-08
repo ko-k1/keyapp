@@ -39,6 +39,42 @@ public final class KeyboardPrefsRepository {
         return preferences.getBoolean(PrefsKeys.FLICK_PREVIEW, defValue);
     }
 
+    public static void setFlickPreview(SharedPreferences preferences, boolean enabled) {
+        preferences.edit().putBoolean(PrefsKeys.FLICK_PREVIEW, enabled).apply();
+    }
+
+    public static void setKeyGap(SharedPreferences preferences, int value) {
+        preferences.edit().putInt(PrefsKeys.KEY_GAP, value).apply();
+    }
+
+    public static void setKeyRadius(SharedPreferences preferences, int value) {
+        preferences.edit().putInt(PrefsKeys.KEY_RADIUS, value).apply();
+    }
+
+    /** Typed int pref accessor so callers never touch raw keys. */
+    public interface IntSetting {
+        int get(SharedPreferences preferences, int defValue);
+        void set(SharedPreferences preferences, int value);
+    }
+
+    public static final IntSetting KEY_GAP_SETTING = new IntSetting() {
+        @Override public int get(SharedPreferences preferences, int defValue) {
+            return keyGap(preferences, defValue);
+        }
+        @Override public void set(SharedPreferences preferences, int value) {
+            setKeyGap(preferences, value);
+        }
+    };
+
+    public static final IntSetting KEY_RADIUS_SETTING = new IntSetting() {
+        @Override public int get(SharedPreferences preferences, int defValue) {
+            return keyRadius(preferences, defValue);
+        }
+        @Override public void set(SharedPreferences preferences, int value) {
+            setKeyRadius(preferences, value);
+        }
+    };
+
     public static void applyTo(SharedPreferences preferences, KeyboardView keyboard) {
         keyboard.setKeyStyle(
                 keyGap(preferences, KeyboardView.DEFAULT_KEY_GAP_DP),

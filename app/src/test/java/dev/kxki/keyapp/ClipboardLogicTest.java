@@ -58,6 +58,24 @@ public final class ClipboardLogicTest {
                 new ArrayList<>(Arrays.asList("a")), new ArrayList<>()));
     }
 
+    @Test public void historyIsCapped() {
+        List<String> history = new ArrayList<>();
+        for (int i = 0; i < ClipboardLogic.MAX_HISTORY; i++) history.add("item-" + i);
+        assertTrue(ClipboardLogic.mergeItem(history, "fresh"));
+        assertEquals(ClipboardLogic.MAX_HISTORY, history.size());
+        assertEquals("fresh", history.get(0));
+        assertEquals("item-0", history.get(1));
+    }
+
+    @Test public void labelCollapsesWhitespaceAndTruncates() {
+        assertEquals("a b", ClipboardLogic.clipboardLabel("a\nb"));
+        assertEquals("hi", ClipboardLogic.clipboardLabel("  hi  "));
+        assertEquals("short", ClipboardLogic.clipboardLabel("short"));
+        String longText = "0123456789abcdefghij0123456789";
+        assertEquals(30, longText.length());
+        assertEquals(longText.substring(0, 24) + "…", ClipboardLogic.clipboardLabel(longText));
+    }
+
     @Test public void snapshotWinsOverStaleIndex() {
         List<String> history = new ArrayList<>(Arrays.asList("new", "old"));
         // User pressed "old" at index 1, then "new" arrived shifting indices.

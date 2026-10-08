@@ -7,6 +7,12 @@ import org.junit.Test;
 import org.mozc.android.inputmethod.japanese.protobuf.ProtoCandidateWindow;
 import org.mozc.android.inputmethod.japanese.protobuf.ProtoCommands;
 
+import dev.kxki.keyapp.ime.ImeListener;
+import dev.kxki.keyapp.ime.ImeState;
+import dev.kxki.keyapp.ime.ImeTransport;
+import dev.kxki.keyapp.kana.KanaTable;
+import dev.kxki.keyapp.keyboard.DeleteRange;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -70,14 +76,14 @@ public final class JapaneseImeControllerTest {
         transport.deleteOnBackspace = true;
         controller.backspace(true);
         assertEquals(1, listener.deleted);
-        assertEquals("ば", JapaneseImeController.transformLast("は"));
-        assertEquals("ぱ", JapaneseImeController.transformLast("ば"));
-        assertEquals("は", JapaneseImeController.transformLast("ぱ"));
-        assertEquals("っ", JapaneseImeController.transformLast("つ"));
-        assertEquals("づ", JapaneseImeController.transformLast("っ"));
-        assertEquals("ゃ", JapaneseImeController.transformLast("や"));
-        assertEquals("や", JapaneseImeController.transformLast("ゃ"));
-        assertEquals("ん", JapaneseImeController.transformLast("ん"));
+        assertEquals("ば", KanaTable.transformLast("は"));
+        assertEquals("ぱ", KanaTable.transformLast("ば"));
+        assertEquals("は", KanaTable.transformLast("ぱ"));
+        assertEquals("っ", KanaTable.transformLast("つ"));
+        assertEquals("づ", KanaTable.transformLast("っ"));
+        assertEquals("ゃ", KanaTable.transformLast("や"));
+        assertEquals("や", KanaTable.transformLast("ゃ"));
+        assertEquals("ん", KanaTable.transformLast("ん"));
     }
 
     @Test public void backspaceClearsTheFinalKana() {
@@ -93,17 +99,6 @@ public final class JapaneseImeControllerTest {
 
         assertEquals("", listener.composing);
         assertTrue(listener.finished);
-    }
-
-    @Test public void backspaceFlickMapsDeletionRanges() {
-        assertEquals(KeyboardView.DeleteRange.TO_END,
-                KeyboardView.backspaceFlick(0, -30, 20));
-        assertEquals(KeyboardView.DeleteRange.TO_START,
-                KeyboardView.backspaceFlick(0, 30, 20));
-        assertEquals(KeyboardView.DeleteRange.ALL,
-                KeyboardView.backspaceFlick(-30, 0, 20));
-        assertEquals(null, KeyboardView.backspaceFlick(30, 0, 20));
-        assertEquals(null, KeyboardView.backspaceFlick(0, 0, 20));
     }
 
     @Test public void cursorMovementEditsMozcPreeditAtTheNewPosition() {
@@ -177,7 +172,7 @@ public final class JapaneseImeControllerTest {
         assertEquals(1, listener.composingCursor);
     }
 
-    private static final class FakeTransport implements JapaneseImeController.Transport {
+    private static final class FakeTransport implements ImeTransport {
         final List<ProtoCommands.Input> inputs = new ArrayList<>();
         boolean available = true;
         boolean deleteOnBackspace;
@@ -307,7 +302,7 @@ public final class JapaneseImeControllerTest {
         }
     }
 
-    private static final class RecordingListener implements JapaneseImeController.Listener {
+    private static final class RecordingListener implements ImeListener {
         String composing = "";
         String committed = "";
         int deleted;
@@ -316,7 +311,7 @@ public final class JapaneseImeControllerTest {
         int editorVertical;
         boolean editorAction;
         boolean finished;
-        JapaneseImeController.State state;
+        ImeState state;
 
         @Override public void onComposing(long token, String text, int cursor) {
             composing = text;
@@ -324,13 +319,13 @@ public final class JapaneseImeControllerTest {
         }
         @Override public void onCommit(long token, String text) { committed += text; }
         @Override public void onDeleteBefore(long token, int length) { deleted += length; }
-        @Override public void onDeleteRange(long token, KeyboardView.DeleteRange range) {}
+        @Override public void onDeleteRange(long token, DeleteRange range) {}
         @Override public void onFinishComposing(long token) { finished = true; }
         @Override public void onEditorAction(long token) { editorAction = true; }
         @Override public void onEditorCursorMove(long token, int horizontal, int vertical) {
             editorHorizontal = horizontal;
             editorVertical = vertical;
         }
-        @Override public void onState(long token, JapaneseImeController.State next) { state = next; }
+        @Override public void onState(long token, ImeState next) { state = next; }
     }
 }

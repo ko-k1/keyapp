@@ -20,12 +20,13 @@ import java.util.List;
 import java.util.Locale;
 
 import dev.kxki.keyapp.kana.FlickMap;
+import dev.kxki.keyapp.keyboard.CursorPhysics;
+import dev.kxki.keyapp.keyboard.DeleteRange;
+import dev.kxki.keyapp.keyboard.KeyLayout;
 import dev.kxki.keyapp.keyboard.KeyboardGeometry;
 
 /** Draws keys and candidates only.  The service owns every composition decision. */
 public final class KeyboardView extends View {
-    public enum DeleteRange { TO_END, TO_START, ALL }
-
     public interface OnKeyboardAction {
         void onKana(String kana);
         void onKanaModifier();
@@ -72,7 +73,7 @@ public final class KeyboardView extends View {
     private static final int HIGHLIGHT_COLOR = 0xff50506e;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final List<Key> keys = new ArrayList<>();
+    private final List<KeyLayout.Key> keys = new ArrayList<>();
     private final List<CandidateHit> candidateHits = new ArrayList<>();
     private final Handler repeatHandler = new Handler(Looper.getMainLooper());
     private final SparseArray<PointerState> pointers = new SparseArray<>();
@@ -121,20 +122,8 @@ public final class KeyboardView extends View {
     private static final int RESIZE_BOTTOM = 8;
     private static final int RESIZE_MOVE = 16;
 
-    private static final class Key {
-        final RectF rect;
-        final String label;
-        final String value;
-
-        Key(float left, float top, float right, float bottom, String label, String value) {
-            this.rect = new RectF(left, top, right, bottom);
-            this.label = label;
-            this.value = value;
-        }
-    }
-
     private static final class PointerState {
-        final Key key;
+        final KeyLayout.Key key;
         final float downX;
         final float downY;
         final boolean candidate;
@@ -159,7 +148,7 @@ public final class KeyboardView extends View {
         boolean flickPreview;
         boolean flickGuide;
 
-        PointerState(Key key, float x, float y, long eventTime, boolean candidate,
+        PointerState(KeyLayout.Key key, float x, float y, long eventTime, boolean candidate,
                 boolean candidateStrip) {
             this.key = key;
             this.downX = x;
@@ -264,19 +253,9 @@ public final class KeyboardView extends View {
         if (next.isEmpty() || ClipboardLogic.headChanged(previous, next)) {
             clipboardScroll = 0;
         } else {
-            clipboardScroll = clampClipboardScroll(clipboardScroll, clipboardHistory.size());
+            clipboardScroll = ClipboardLogic.clampScroll(clipboardScroll, clipboardHistory.size());
         }
         invalidate();
-    }
-
-    static int visibleClipboardRows() { return ClipboardLogic.VISIBLE_ROWS; }
-
-    static int clampClipboardScroll(int scroll, int size) {
-        return ClipboardLogic.clampScroll(scroll, size);
-    }
-
-    static String resolveClipboardPaste(String keyValue, List<String> history, String snapshot) {
-        return ClipboardLogic.resolvePaste(keyValue, history, snapshot);
     }
 
     public void setMozcState(List<Candidate> nextCandidates, boolean available, boolean isPrivate) {
@@ -324,16 +303,17 @@ public final class KeyboardView extends View {
         canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
         drawCandidateArea(canvas);
         for (int i = 0; i < keys.size(); i++) {
-            Key key = keys.get(i);
+            KeyLayout.Key key = keys.get(i);
             boolean shift = "#shift".equals(key.value);
             boolean highlighted = shift ? shiftLocked : isPressed(key);
+            RectF rect = key.rect();
             paint.setColor(highlighted ? HIGHLIGHT_COLOR : Color.argb(190, 50, 50, 65));
-            canvas.drawRoundRect(key.rect, dp(keyRadiusDp), dp(keyRadiusDp), paint);
+            canvas.drawRoundRect(rect, dp(keyRadiusDp), dp(keyRadiusDp), paint);
             paint.setColor(highlighted ? Color.WHITE : Color.rgb(220, 220, 230));
             paint.setTextAlign(Paint.Align.CENTER);
             String label = cursorPointerId == MotionEvent.INVALID_POINTER_ID ? key.label : "";
             paint.setTextSize(dp(label.length() > 2 ? 14 : 18));
-            canvas.drawText(label, key.rect.centerX(), centeredY(key.rect.centerY()), paint);
+            canvas.drawText(label, rect.centerX(), centeredY(rect.centerY()), paint);
         }
         drawFlickPreviews(canvas);
         if (resizeMode) drawResizeHandles(canvas);
@@ -346,9 +326,9 @@ public final class KeyboardView extends View {
         for (int pointer = 0; pointer < pointers.size(); pointer++) {
             PointerState state = pointers.valueAt(pointer);
             if (!state.flickPreview || state.flicks == null) continue;
-            float x = clamp(state.key.rect.centerX(), keyboardLeft() + tile * 1.5f,
+            float x = clamp(state.key.rect().centerX(), keyboardLeft() + tile * 1.5f,
                     keyboardRight() - tile * 1.5f);
-            float y = clamp(state.key.rect.centerY(), tile * 1.5f,
+            float y = clamp(state.key.rect().centerY(), tile * 1.5f,
                     keyboardBoundary() - tile * 1.5f);
             int selected = flickIndex(state.cursorX - state.downX, state.cursorY - state.downY);
             for (int i = 1; i < state.flicks.length; i++) {
@@ -486,96 +466,23 @@ public final class KeyboardView extends View {
     }
 
     private void buildKeys() {
+        KeyLayout.Input input = new KeyLayout.Input();
+        input.japanese = japanese;
+        input.symbols = symbols;
+        input.numberMode = numberMode;
+        input.clipboard = clipboard;
+        input.shifted = shifted;
+        input.clipboardHistory = clipboardHistory;
+        input.clipboardScroll = clipboardScroll;
+        input.leftPx = keyboardLeft();
+        input.topPx = candidateAreaHeight() + dp(8);
+        input.widthPx = Math.round(keyboardRight() - keyboardLeft());
+        input.keyHeightPx = keyHeight();
+        input.pitchPx = keyPitch();
+        input.gapPx = dp(keyGapDp);
+        input.marginPx = dp(12);
         keys.clear();
-        float top = candidateAreaHeight() + dp(8);
-        int keyboardWidth = Math.round(keyboardRight() - keyboardLeft());
-        if (clipboard) {
-            addRow(keyboardWidth, top, new String[]{"Clear", "ABC", "かな"},
-                    new String[]{"#clear", "#en", "#jp"});
-            if (clipboardHistory.isEmpty()) {
-                addRow(keyboardWidth, top + keyPitch(),
-                        new String[]{"Clipboard empty"}, new String[]{""});
-            } else {
-                for (int row = 0; row < visibleClipboardRows()
-                        && clipboardScroll + row < clipboardHistory.size(); row++) {
-                    int index = clipboardScroll + row;
-                    addRow(keyboardWidth, top + keyPitch() * (row + 1),
-                            new String[]{clipboardLabel(clipboardHistory.get(index))},
-                            new String[]{"#clipboard:" + index});
-                }
-            }
-        } else if (symbols) {
-            buildSymbols(keyboardWidth, top);
-        } else if (japanese && numberMode) {
-            buildJapaneseNumbers(keyboardWidth, top);
-        } else if (japanese) {
-            buildJapanese(keyboardWidth, top);
-        } else {
-            buildQwerty(keyboardWidth, top);
-        }
-    }
-
-    private void buildSymbols(int width, float top) {
-        if (shifted) {
-            addRow(width, top, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"}, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"});
-            addRow(width, top + keyPitch(), new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"}, new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"});
-            addRow(width, top + keyPitch() * 2, new String[]{"⇪", "•", "√", "π", "÷", "×", "°", "¶", "⌫"}, new String[]{"#shift", "•", "√", "π", "÷", "×", "°", "¶", "#del"});
-            addSpaceRow(width, top + keyPitch() * 3, new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
-            return;
-        }
-        addRow(width, top, split("1234567890"), split("1234567890"));
-        addRow(width, top + keyPitch(), new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"}, new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"});
-        addRow(width, top + keyPitch() * 2, new String[]{"⇧", ",", "?", "!", "'", "\"", ":", ";", "⌫"}, new String[]{"#shift", ",", "?", "!", "'", "\"", ":", ";", "#del"});
-        addSpaceRow(width, top + keyPitch() * 3, new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
-    }
-
-    private void buildQwerty(int width, float top) {
-        String first = shifted ? "QWERTYUIOP" : "qwertyuiop";
-        String second = shifted ? "ASDFGHJKL" : "asdfghjkl";
-        addRow(width, top, split(first), split("qwertyuiop"));
-        addRow(width, top + keyPitch(), split(second), split("asdfghjkl"));
-        addRow(width, top + keyPitch() * 2, new String[]{shifted ? "⇪" : "⇧", shifted ? "Z" : "z", shifted ? "X" : "x", shifted ? "C" : "c", shifted ? "V" : "v", shifted ? "B" : "b", shifted ? "N" : "n", shifted ? "M" : "m", "⌫"}, new String[]{"#shift", "z", "x", "c", "v", "b", "n", "m", "#del"});
-        addSpaceRow(width, top + keyPitch() * 3, new String[]{"123", "かな"}, new String[]{"#sym", "#jp"}, "space", " ", new String[]{"clip", "↵"}, new String[]{"#clip", "#enter"});
-    }
-
-    private void buildJapanese(int width, float top) {
-        addRow(width, top, new String[]{"clip", "あ", "か", "さ", "⌫"}, new String[]{"#clip", "あ", "か", "さ", "#del"});
-        addRow(width, top + keyPitch(), new String[]{"ABC", "た", "な", "は", "space"}, new String[]{"#en", "た", "な", "は", " "});
-        addRow(width, top + keyPitch() * 2, new String[]{"123", "ま", "や", "ら", ""}, new String[]{"#num", "ま", "や", "ら", ""});
-        addRow(width, top + keyPitch() * 3, new String[]{"", "小", "わ", "、。", "return"}, new String[]{"", "#small", "わ", "、", "#enter"});
-    }
-
-    private void buildJapaneseNumbers(int width, float top) {
-        addRow(width, top, new String[]{"clip", "1", "2", "3", "⌫"}, new String[]{"#clip", "1", "2", "3", "#del"});
-        addRow(width, top + keyPitch(), new String[]{"ABC", "4", "5", "6", "space"}, new String[]{"#en", "4", "5", "6", " "});
-        addRow(width, top + keyPitch() * 2, new String[]{"かな", "7", "8", "9", ","}, new String[]{"#jp", "7", "8", "9", ","});
-        addRow(width, top + keyPitch() * 3, new String[]{"-", ".", "0", "/", "return"}, new String[]{"-", ".", "0", "/", "#enter"});
-    }
-
-    private void addRow(int width, float top, String[] labels, String[] values) {
-        float gap = dp(keyGapDp);
-        float x = keyboardLeft() + dp(12);
-        float keyWidth = (width - dp(24) - gap * (labels.length - 1)) / labels.length;
-        for (int i = 0; i < labels.length; i++) {
-            keys.add(new Key(x, top, x + keyWidth, top + keyHeight(), labels[i], values[i]));
-            x += keyWidth + gap;
-        }
-    }
-
-    private void addSpaceRow(int width, float top, String[] leftLabels, String[] leftValues, String centerLabel, String centerValue, String[] rightLabels, String[] rightValues) {
-        float gap = dp(keyGapDp);
-        float keyWidth = (width - dp(24) - gap * (leftLabels.length + rightLabels.length)) / (leftLabels.length + rightLabels.length + 4);
-        float x = keyboardLeft() + dp(12);
-        for (int i = 0; i < leftLabels.length; i++) {
-            keys.add(new Key(x, top, x + keyWidth, top + keyHeight(), leftLabels[i], leftValues[i]));
-            x += keyWidth + gap;
-        }
-        keys.add(new Key(x, top, x + keyWidth * 4, top + keyHeight(), centerLabel, centerValue));
-        x += keyWidth * 4 + gap;
-        for (int i = 0; i < rightLabels.length; i++) {
-            keys.add(new Key(x, top, x + keyWidth, top + keyHeight(), rightLabels[i], rightValues[i]));
-            x += keyWidth + gap;
-        }
+        keys.addAll(KeyLayout.build(input));
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
@@ -802,8 +709,8 @@ public final class KeyboardView extends View {
                 if (Math.abs(y - state.downY) > dp(12)) state.clipboardDrag = true;
                 int steps = (int) (-delta / dp(32));
                 if (steps != 0) {
-                    clipboardScroll =
-                            clampClipboardScroll(clipboardScroll + steps, clipboardHistory.size());
+                    clipboardScroll = ClipboardLogic.clampScroll(
+                            clipboardScroll + steps, clipboardHistory.size());
                     state.clipboardY += -steps * dp(32);
                     invalidate();
                 }
@@ -868,7 +775,7 @@ public final class KeyboardView extends View {
                 && !(state.shiftLongPressed && "#shift".equals(state.key.value))) {
             performClick();
             if (state.key.value.startsWith("#clipboard:")) {
-                String text = resolveClipboardPaste(
+                String text = ClipboardLogic.resolvePaste(
                         state.key.value, clipboardHistory, state.clipboardText);
                 if (text != null && action != null) action.onRawText(text);
             } else {
@@ -903,18 +810,15 @@ public final class KeyboardView extends View {
         state.cursorEventX = x;
         state.cursorEventTime = eventTime;
         if (Math.abs(dx) >= Math.abs(dy)) {
-            int horizontal = (int) (dx / step);
+            int horizontal = CursorPhysics.steps(dx, step);
             if (horizontal == 0) return;
             state.cursorX += horizontal * step;
             state.cursorY = y;
-            float speed = Math.min(1f,
-                    horizontalSpeed / dp(CURSOR_ACCELERATION_DP_PER_SECOND));
-            float acceleration = 1f + 2f * speed * speed * (3f - 2f * speed);
-            int accelerated = Math.round(Math.abs(horizontal) * acceleration)
-                    * Integer.signum(horizontal);
+            int accelerated = CursorPhysics.accelerate(
+                    horizontal, horizontalSpeed, dp(CURSOR_ACCELERATION_DP_PER_SECOND));
             if (action != null) action.onCursorMove(accelerated, 0);
         } else {
-            int vertical = (int) (dy / step);
+            int vertical = CursorPhysics.steps(dy, step);
             if (vertical == 0) return;
             state.cursorX = x;
             state.cursorY += vertical * step;
@@ -948,12 +852,13 @@ public final class KeyboardView extends View {
         }
     }
 
-    private void handle(Key key, float dx, float dy) {
+    private void handle(KeyLayout.Key key, float dx, float dy) {
         if (action == null) return;
         String value = key.value;
         switch (value) {
             case "#del":
-                DeleteRange range = japanese && !symbols ? backspaceFlick(dx, dy, dp(20)) : null;
+                DeleteRange range = japanese && !symbols
+                        ? DeleteRange.fromBackspaceFlick(dx, dy, dp(20)) : null;
                 if (range == null) action.onBackspace(japanese && !symbols);
                 else action.onDeleteRange(range);
                 return;
@@ -1013,7 +918,7 @@ public final class KeyboardView extends View {
                 break;
         }
         if (value.startsWith("#clipboard:")) {
-            String text = resolveClipboardPaste(value, clipboardHistory, null);
+            String text = ClipboardLogic.resolvePaste(value, clipboardHistory, null);
             if (text != null) action.onRawText(text);
             return;
         }
@@ -1035,49 +940,14 @@ public final class KeyboardView extends View {
         }
     }
 
-    private String clipboardLabel(String value) {
-        String text = value.replace('\n', ' ').replace('\r', ' ').trim();
-        int count = text.codePointCount(0, text.length());
-        return count <= 24 ? text : text.substring(0, text.offsetByCodePoints(0, 24)) + "…";
-    }
-
     private int keyAt(float x, float y) {
-        if (keys.isEmpty()) return -1;
-        float left = Float.MAX_VALUE;
-        float top = Float.MAX_VALUE;
-        float right = -Float.MAX_VALUE;
-        float bottom = -Float.MAX_VALUE;
-        for (Key key : keys) {
-            left = Math.min(left, key.rect.left);
-            top = Math.min(top, key.rect.top);
-            right = Math.max(right, key.rect.right);
-            bottom = Math.max(bottom, key.rect.bottom);
-        }
-        if (x < left || x >= right || y < top || y >= bottom) return -1;
-
-        int best = -1;
-        float bestDistance = Float.MAX_VALUE;
-        float horizontalSlop = dp(3);
-        float verticalSlop = dp(4);
-        for (int i = 0; i < keys.size(); i++) {
-            RectF rect = keys.get(i).rect;
-            if (x < rect.left - horizontalSlop || x >= rect.right + horizontalSlop
-                    || y < rect.top - verticalSlop || y >= rect.bottom + verticalSlop) continue;
-            float dx = Math.max(rect.left - x, Math.max(0, x - rect.right));
-            float dy = Math.max(rect.top - y, Math.max(0, y - rect.bottom));
-            float distance = dx * dx + dy * dy;
-            if (distance < bestDistance) {
-                best = i;
-                bestDistance = distance;
-            }
-        }
-        return best;
+        return KeyLayout.hitTest(keys, x, y, dp(3), dp(4));
     }
 
-    private boolean isPressed(Key key) {
+    private boolean isPressed(KeyLayout.Key key) {
         for (int i = 0; i < pointers.size(); i++) {
-            Key pressed = pointers.valueAt(i).key;
-            if (pressed != null && pressed.rect.equals(key.rect)) return true;
+            KeyLayout.Key pressed = pointers.valueAt(i).key;
+            if (pressed != null && pressed.sameBounds(key)) return true;
         }
         return false;
     }
@@ -1101,12 +971,6 @@ public final class KeyboardView extends View {
         return Integer.MIN_VALUE;
     }
 
-    static DeleteRange backspaceFlick(float dx, float dy, float threshold) {
-        if (Math.abs(dx) + Math.abs(dy) <= threshold) return null;
-        if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? DeleteRange.ALL : null;
-        return dy < 0 ? DeleteRange.TO_END : DeleteRange.TO_START;
-    }
-
     private String resolveFlick(String base, float dx, float dy) {
         return FlickMap.resolveFlick(base, dx, dy, dp(FLICK_THRESHOLD_DP));
     }
@@ -1117,12 +981,6 @@ public final class KeyboardView extends View {
 
     private static String[] flickRow(String base) {
         return FlickMap.flickRow(base);
-    }
-
-    private String[] split(String text) {
-        String[] values = new String[text.length()];
-        for (int i = 0; i < text.length(); i++) values[i] = String.valueOf(text.charAt(i));
-        return values;
     }
 
     private float centeredY(float center) {

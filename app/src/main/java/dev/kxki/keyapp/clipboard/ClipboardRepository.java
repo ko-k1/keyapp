@@ -14,7 +14,7 @@ public final class ClipboardRepository {
     private ClipboardRepository() {}
 
     public static void loadInto(List<String> out, SharedPreferences preferences) {
-        int count = preferences.getInt(CLIPBOARD_COUNT, 0);
+        int count = Math.min(preferences.getInt(CLIPBOARD_COUNT, 0), ClipboardLogic.MAX_HISTORY);
         for (int i = 0; i < count; i++) {
             String value = preferences.getString(CLIPBOARD_ITEM + i, "");
             String normalized = ClipboardLogic.normalizeText(value);

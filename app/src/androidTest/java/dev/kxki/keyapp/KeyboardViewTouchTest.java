@@ -21,6 +21,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import dev.kxki.keyapp.keyboard.DeleteRange;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -264,7 +266,7 @@ public final class KeyboardViewTouchTest {
         touch(MotionEvent.ACTION_MOVE, new int[]{0}, new float[][]{left});
         assertEquals(hidden, flickTileColor(0, 4, 2));
         touch(MotionEvent.ACTION_UP, new int[]{0}, new float[][]{left});
-        assertEquals(Arrays.asList(KeyboardView.DeleteRange.ALL), action.deleteRanges);
+        assertEquals(Arrays.asList(DeleteRange.ALL), action.deleteRanges);
 
         touch(MotionEvent.ACTION_DOWN, new int[]{0}, new float[][]{key});
         Thread.sleep(475);
@@ -504,7 +506,7 @@ public final class KeyboardViewTouchTest {
         final List<String> kanas = new ArrayList<>();
         final List<Boolean> spaces = new ArrayList<>();
         final List<String> cursorMoves = new ArrayList<>();
-        final List<KeyboardView.DeleteRange> deleteRanges = new ArrayList<>();
+        final List<DeleteRange> deleteRanges = new ArrayList<>();
         int backspaces;
         int candidateId = -1;
         int clipboardClears;
@@ -512,7 +514,7 @@ public final class KeyboardViewTouchTest {
         @Override public void onKana(String kana) { kanas.add(kana); }
         @Override public void onKanaModifier() {}
         @Override public void onBackspace(boolean japanese) { backspaces++; }
-        @Override public void onDeleteRange(KeyboardView.DeleteRange range) {
+        @Override public void onDeleteRange(DeleteRange range) {
             deleteRanges.add(range);
         }
         @Override public void onSpace(boolean japanese) { spaces.add(japanese); }

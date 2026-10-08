@@ -2,6 +2,7 @@ package dev.kxki.keyapp;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.ViewGroup;
@@ -36,9 +37,12 @@ public final class KeyboardResizeActivity extends Activity {
 
         keyboard = new KeyboardView(this);
         keyboard.setResizeMode(true);
-        KeyAppImeService.loadKeyboardStyle(this, keyboard);
-        keyboard.setKeyboardFrame(loadWidth(this), loadHeight(this), loadLeft(this),
-                loadBottomGap(this));
+        SharedPreferences preferences = KeyboardPrefsRepository.prefs(this);
+        KeyboardPrefsRepository.applyTo(preferences, keyboard);
+        keyboard.setKeyboardFrame(KeyboardPrefsRepository.loadWidth(this),
+                KeyboardPrefsRepository.loadHeight(this, 300),
+                KeyboardPrefsRepository.loadLeft(this),
+                KeyboardPrefsRepository.loadBottomGap(this));
         FrameLayout.LayoutParams keyboardLayout = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM);
@@ -69,22 +73,6 @@ public final class KeyboardResizeActivity extends Activity {
                 keyboard.getKeyboardLeftDp(),
                 keyboard.getKeyboardBottomGapDp());
         finish();
-    }
-
-    static int loadHeight(Context context) {
-        return KeyboardPrefsRepository.loadHeight(context, 300);
-    }
-
-    static int loadWidth(Context context) {
-        return KeyboardPrefsRepository.loadWidth(context);
-    }
-
-    static int loadLeft(Context context) {
-        return KeyboardPrefsRepository.loadLeft(context);
-    }
-
-    static int loadBottomGap(Context context) {
-        return KeyboardPrefsRepository.loadBottomGap(context);
     }
 
     private static int screenWidthDp(Context context) {

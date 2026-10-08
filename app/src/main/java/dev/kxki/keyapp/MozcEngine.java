@@ -7,12 +7,13 @@ import com.google.protobuf.InvalidProtocolBufferException;
 
 import org.mozc.android.inputmethod.japanese.protobuf.ProtoCommands;
 
+import dev.kxki.keyapp.ime.ImeTransport;
 import dev.kxki.keyapp.mozc.MozcAssetInstaller;
 
 import java.io.IOException;
 
 /** Thin checked wrapper around Mozc's byte-oriented JNI session handler. */
-final class MozcEngine implements JapaneseImeController.Transport {
+final class MozcEngine implements ImeTransport {
     static final String REVISION = MozcAssetInstaller.REVISION;
     private static final Object JNI_LOCK = new Object();
 

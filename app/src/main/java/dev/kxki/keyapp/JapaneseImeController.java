@@ -4,10 +4,8 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
-import org.mozc.android.inputmethod.japanese.protobuf.ProtoCandidateWindow;
 import org.mozc.android.inputmethod.japanese.protobuf.ProtoCommands;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -15,76 +13,35 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 
+import dev.kxki.keyapp.ime.CandidateReader;
+import dev.kxki.keyapp.ime.ImeCandidate;
+import dev.kxki.keyapp.ime.ImeListener;
+import dev.kxki.keyapp.ime.ImeState;
+import dev.kxki.keyapp.ime.ImeTransport;
+import dev.kxki.keyapp.ime.SessionManager;
 import dev.kxki.keyapp.kana.KanaTable;
+import dev.kxki.keyapp.keyboard.DeleteRange;
 
 /** Serializes Mozc and projects its protocol output into Android edit operations. */
 final class JapaneseImeController implements AutoCloseable {
 
-    interface Transport {
-        boolean open();
-        boolean isAvailable();
-        ProtoCommands.Command evaluate(ProtoCommands.Command command);
-        boolean clearLearning();
-        String error();
-    }
-
-    interface Listener {
-        void onComposing(long token, String text, int cursor);
-        void onCommit(long token, String text);
-        void onDeleteBefore(long token, int length);
-        void onDeleteRange(long token, KeyboardView.DeleteRange range);
-        void onFinishComposing(long token);
-        void onEditorAction(long token);
-        void onEditorCursorMove(long token, int horizontal, int vertical);
-        void onState(long token, State state);
-    }
-
-    static final class Candidate {
-        final int id;
-        final String value;
-        final String label;
-        final boolean focused;
-
-        Candidate(int id, String value, String label, boolean focused) {
-            this.id = id;
-            this.value = value;
-            this.label = label;
-            this.focused = focused;
-        }
-    }
-
-    static final class State {
-        final boolean available;
-        final boolean privateMode;
-        final List<Candidate> candidates;
-        final String error;
-
-        State(boolean available, boolean privateMode, List<Candidate> candidates, String error) {
-            this.available = available;
-            this.privateMode = privateMode;
-            this.candidates = Collections.unmodifiableList(new ArrayList<>(candidates));
-            this.error = error;
-        }
-    }
-
-    private final Transport transport;
-    private final Listener listener;
+    private final SessionManager sessions;
+    private final ImeListener listener;
     private final Executor serial;
     private final Executor callbacks;
     private final ExecutorService ownedExecutor;
     private final AtomicLong currentToken = new AtomicLong();
 
     // Accessed only by serial.
-    private long sessionId;
     private boolean japanese;
     private boolean privateMode;
     private String rawKana = "";
     private int preeditLength;
     private int preeditCursor;
-    private List<Candidate> candidates = Collections.emptyList();
+    private List<ImeCandidate> candidates = Collections.emptyList();
 
-    JapaneseImeController(Context context, Listener listener) {
-        this.transport = new MozcEngine(context);
+    JapaneseImeController(Context context, ImeListener listener) {
+        this.sessions = new SessionManager(new MozcEngine(context));
         this.listener = listener;
         this.ownedExecutor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "KeyApp-Mozc");
@@ -96,8 +53,8 @@ final class JapaneseImeController implements AutoCloseable {
         this.callbacks = runnable -> main.post(runnable);
     }
 
-    JapaneseImeController(Transport transport, Listener listener, Executor serial, Executor callbacks) {
-        this.transport = transport;
+    JapaneseImeController(ImeTransport transport, ImeListener listener, Executor serial, Executor callbacks) {
+        this.sessions = new SessionManager(transport);
         this.listener = listener;
         this.serial = serial;
         this.callbacks = callbacks;
@@ -108,14 +65,14 @@ final class JapaneseImeController implements AutoCloseable {
         long token = currentToken.incrementAndGet();
         serial.execute(() -> {
             if (!isCurrent(token)) return;
-            deleteSession();
+            sessions.deleteSession();
             japanese = false;
             privateMode = isPrivate;
             rawKana = "";
             preeditLength = 0;
             preeditCursor = 0;
             candidates = Collections.emptyList();
-            transport.open();
+            sessions.open();
             emitState(token);
         });
         return token;
@@ -137,12 +94,8 @@ final class JapaneseImeController implements AutoCloseable {
         serial.execute(() -> {
             if (!isCurrent(token)) return;
             privateMode = enabled;
-            if (sessionId != 0 && transport.isAvailable()) {
-                evaluate(ProtoCommands.Input.newBuilder()
-                        .setType(ProtoCommands.Input.CommandType.SET_REQUEST)
-                        .setId(sessionId)
-                        .setRequest(request())
-                        .build());
+            if (sessions.hasSession() && sessions.isAvailable()) {
+                sessions.updateRequest(token, privateMode);
             }
             emitState(token);
         });
@@ -152,9 +105,9 @@ final class JapaneseImeController implements AutoCloseable {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || !japanese || kana.isEmpty()) return;
-            rawKana = insertCodePoints(rawKana, preeditCursor, kana);
-            preeditCursor += codePointLength(kana);
-            preeditLength += codePointLength(kana);
+            rawKana = KanaTable.insertCodePoints(rawKana, preeditCursor, kana);
+            preeditCursor += KanaTable.codePointLength(kana);
+            preeditLength += KanaTable.codePointLength(kana);
             if (!ensureSession(token)) {
                 emitComposing(token, rawKana, preeditCursor);
                 emitState(token);
@@ -166,7 +119,7 @@ final class JapaneseImeController implements AutoCloseable {
                     .setMode(ProtoCommands.CompositionMode.HIRAGANA)
                     .setActivated(true)
                     .build();
-            project(token, evaluate(sessionInput(ProtoCommands.Input.CommandType.SEND_KEY).setKey(key).build()));
+            project(token, sessions.sendKey(key, token, privateMode));
         });
     }
 
@@ -174,7 +127,7 @@ final class JapaneseImeController implements AutoCloseable {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || !japanese || rawKana.isEmpty() || preeditCursor == 0) return;
-            String changed = transformBeforeCursor(rawKana, preeditCursor);
+            String changed = KanaTable.transformBeforeCursor(rawKana, preeditCursor);
             if (changed.equals(rawKana)) return;
             rawKana = changed;
             if (!ensureSession(token)) {
@@ -188,12 +141,13 @@ final class JapaneseImeController implements AutoCloseable {
                             .setCompositionString(rawKana)
                             .setProbability(1)
                             .build();
-            project(token, sendCommand(ProtoCommands.SessionCommand.newBuilder()
+            project(token, sessions.sendCommand(ProtoCommands.SessionCommand.newBuilder()
                     .setType(ProtoCommands.SessionCommand.CommandType.UPDATE_COMPOSITION)
                     .addCompositionEvents(event)
-                    .build()));
-            if (sessionId != 0 && preeditLength > 0 && preeditCursor != cursor) {
-                moveMozcCursor(token, Math.min(cursor, preeditLength));
+                    .build(), token, privateMode));
+            if (sessions.hasSession() && preeditLength > 0 && preeditCursor != cursor) {
+                project(token, sessions.moveMozcCursor(
+                        Math.min(cursor, preeditLength), token, privateMode));
             }
         });
     }
@@ -213,7 +167,7 @@ final class JapaneseImeController implements AutoCloseable {
             }
             if (!ensureSession(token)) {
                 if (preeditCursor == 0) return;
-                rawKana = removeCodePointBefore(rawKana, preeditCursor);
+                rawKana = KanaTable.removeCodePointBefore(rawKana, preeditCursor);
                 preeditCursor--;
                 preeditLength--;
                 if (rawKana.isEmpty()) emitFinish(token);
@@ -224,7 +178,7 @@ final class JapaneseImeController implements AutoCloseable {
             ProtoCommands.KeyEvent key = ProtoCommands.KeyEvent.newBuilder()
                     .setSpecialKey(ProtoCommands.KeyEvent.SpecialKey.BACKSPACE)
                     .build();
-            project(token, evaluate(sessionInput(ProtoCommands.Input.CommandType.SEND_KEY).setKey(key).build()));
+            project(token, sessions.sendKey(key, token, privateMode));
         });
     }
 
@@ -236,17 +190,18 @@ final class JapaneseImeController implements AutoCloseable {
                 emitEditorCursorMove(token, horizontal, vertical);
                 return;
             }
-            int target = clamp(preeditCursor + horizontal, 0, preeditLength);
+            int target = KanaTable.clamp(preeditCursor + horizontal, 0, preeditLength);
             if (target == preeditCursor) return;
-            if (sessionId != 0 && transport.isAvailable()) moveMozcCursor(token, target);
-            else {
+            if (sessions.hasSession() && sessions.isAvailable()) {
+                project(token, sessions.moveMozcCursor(target, token, privateMode));
+            } else {
                 preeditCursor = target;
                 emitComposing(token, rawKana, preeditCursor);
             }
         });
     }
 
-    void deleteRange(KeyboardView.DeleteRange range) {
+    void deleteRange(DeleteRange range) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token)) return;
@@ -273,18 +228,18 @@ final class JapaneseImeController implements AutoCloseable {
             ProtoCommands.KeyEvent key = ProtoCommands.KeyEvent.newBuilder()
                     .setSpecialKey(ProtoCommands.KeyEvent.SpecialKey.SPACE)
                     .build();
-            project(token, evaluate(sessionInput(ProtoCommands.Input.CommandType.SEND_KEY).setKey(key).build()));
+            project(token, sessions.sendKey(key, token, privateMode));
         });
     }
 
     void selectCandidate(int candidateId) {
         long token = currentToken.get();
         serial.execute(() -> {
-            if (!isCurrent(token) || sessionId == 0 || !transport.isAvailable()) return;
-            project(token, sendCommand(ProtoCommands.SessionCommand.newBuilder()
+            if (!isCurrent(token) || !sessions.hasSession() || !sessions.isAvailable()) return;
+            project(token, sessions.sendCommand(ProtoCommands.SessionCommand.newBuilder()
                     .setType(ProtoCommands.SessionCommand.CommandType.SUBMIT_CANDIDATE)
                     .setId(candidateId)
-                    .build()));
+                    .build(), token, privateMode));
         });
     }
 
@@ -319,7 +274,7 @@ final class JapaneseImeController implements AutoCloseable {
     void abandon() {
         currentToken.incrementAndGet();
         serial.execute(() -> {
-            deleteSession();
+            sessions.deleteSession();
             japanese = false;
             rawKana = "";
             preeditLength = 0;
@@ -334,84 +289,13 @@ final class JapaneseImeController implements AutoCloseable {
     }
 
     private boolean ensureSession(long token) {
-        if (sessionId != 0 && transport.isAvailable()) return true;
-        if (!transport.open()) return false;
-        ProtoCommands.Input input = ProtoCommands.Input.newBuilder()
-                .setType(ProtoCommands.Input.CommandType.CREATE_SESSION)
-                .setRequest(request())
-                .setCapability(capability())
-                .setContext(context(token))
-                .build();
-        ProtoCommands.Command created = evaluate(input);
-        if (created == null || !created.hasOutput()
-                || created.getOutput().getErrorCode() != ProtoCommands.Output.ErrorCode.SESSION_SUCCESS
-                || created.getOutput().getId() == 0) {
-            sessionId = 0;
-            return false;
-        }
-        sessionId = created.getOutput().getId();
-        sendCommand(ProtoCommands.SessionCommand.newBuilder()
-                .setType(ProtoCommands.SessionCommand.CommandType.TURN_ON_IME)
-                .setCompositionMode(ProtoCommands.CompositionMode.HIRAGANA)
-                .build());
-        return transport.isAvailable();
-    }
-
-    private ProtoCommands.Input.Builder sessionInput(ProtoCommands.Input.CommandType type) {
-        return ProtoCommands.Input.newBuilder()
-                .setType(type)
-                .setId(sessionId)
-                .setRequest(request())
-                .setContext(context(currentToken.get()))
-                .setCapability(capability());
-    }
-
-    private ProtoCommands.Command sendCommand(ProtoCommands.SessionCommand command) {
-        return evaluate(sessionInput(ProtoCommands.Input.CommandType.SEND_COMMAND)
-                .setCommand(command)
-                .build());
-    }
-
-    private void moveMozcCursor(long token, int position) {
-        project(token, sendCommand(ProtoCommands.SessionCommand.newBuilder()
-                .setType(ProtoCommands.SessionCommand.CommandType.MOVE_CURSOR)
-                .setCursorPosition(position)
-                .build()));
-    }
-
-    private ProtoCommands.Command evaluate(ProtoCommands.Input input) {
-        return transport.evaluate(ProtoCommands.Command.newBuilder().setInput(input).build());
-    }
-
-    private ProtoCommands.Request request() {
-        return ProtoCommands.Request.newBuilder()
-                .setZeroQuerySuggestion(true)
-                .setMixedConversion(true)
-                .setKanaModifierInsensitiveConversion(true)
-                .setCandidatePageSize(9)
-                .setCandidatesSizeLimit(100)
-                .setFillIncognitoCandidateWords(privateMode)
-                .setIsIncognitoMode(privateMode)
-                .build();
-    }
-
-    private ProtoCommands.Capability capability() {
-        return ProtoCommands.Capability.newBuilder()
-                .setTextDeletion(ProtoCommands.Capability.TextDeletionCapabilityType.DELETE_PRECEDING_TEXT)
-                .build();
-    }
-
-    private ProtoCommands.Context context(long token) {
-        return ProtoCommands.Context.newBuilder()
-                .setInputFieldType(ProtoCommands.Context.InputFieldType.NORMAL)
-                .setRevision((int) token)
-                .build();
+        return sessions.ensureSession(token, privateMode);
     }
 
     private void project(long token, ProtoCommands.Command command) {
         if (command == null || !command.hasOutput()
                 || command.getOutput().getErrorCode() != ProtoCommands.Output.ErrorCode.SESSION_SUCCESS) {
-            sessionId = 0;
+            sessions.invalidate();
             candidates = Collections.emptyList();
             emitComposing(token, rawKana, preeditCursor);
             emitState(token);
@@ -437,8 +321,8 @@ final class JapaneseImeController implements AutoCloseable {
                 reading.append(segment.hasKey() ? segment.getKey() : segment.getValue());
             }
             rawKana = reading.toString();
-            preeditLength = codePointLength(visible.toString());
-            preeditCursor = clamp(output.getPreedit().getCursor(), 0, preeditLength);
+            preeditLength = KanaTable.codePointLength(visible.toString());
+            preeditCursor = KanaTable.clamp(output.getPreedit().getCursor(), 0, preeditLength);
             emitComposing(token, visible.toString(), preeditCursor);
         } else {
             rawKana = "";
@@ -446,77 +330,30 @@ final class JapaneseImeController implements AutoCloseable {
             preeditCursor = 0;
             emitFinish(token);
         }
-        if (hasCandidateList(output)) {
-            candidates = readCandidates(output);
+        if (CandidateReader.hasCandidateList(output, privateMode)) {
+            candidates = CandidateReader.read(output, privateMode);
         } else if (!output.hasCandidateWindow()) {
             candidates = Collections.emptyList();
         }
         if (output.hasCandidateWindow()) {
-            candidates = updateCandidateFocus(candidates, output.getCandidateWindow());
+            candidates = CandidateReader.updateFocus(candidates, output.getCandidateWindow());
         }
         emitState(token);
-    }
-
-    private boolean hasCandidateList(ProtoCommands.Output output) {
-        return (privateMode && output.hasIncognitoCandidateWords()) || output.hasAllCandidateWords();
-    }
-
-    private List<Candidate> readCandidates(ProtoCommands.Output output) {
-        ProtoCandidateWindow.CandidateList list;
-        if (privateMode && output.hasIncognitoCandidateWords()) {
-            list = output.getIncognitoCandidateWords();
-        } else if (output.hasAllCandidateWords()) {
-            list = output.getAllCandidateWords();
-        } else {
-            return Collections.emptyList();
-        }
-        List<Candidate> result = new ArrayList<>(list.getCandidatesCount());
-        for (int i = 0; i < list.getCandidatesCount(); i++) {
-            ProtoCandidateWindow.CandidateWord word = list.getCandidates(i);
-            String label = word.hasAnnotation() ? word.getAnnotation().getDescription() : "";
-            result.add(new Candidate(word.getId(), word.getValue(), label,
-                    list.hasFocusedIndex() && list.getFocusedIndex() == i));
-        }
-        return result;
-    }
-
-    private List<Candidate> updateCandidateFocus(
-            List<Candidate> source, ProtoCandidateWindow.CandidateWindow window) {
-        Integer focusedId = null;
-        if (window.hasFocusedIndex()) {
-            for (ProtoCandidateWindow.CandidateWindow.Candidate candidate : window.getCandidateList()) {
-                if (candidate.getIndex() == window.getFocusedIndex() && candidate.hasId()) {
-                    focusedId = candidate.getId();
-                    break;
-                }
-            }
-            if (focusedId == null && window.getFocusedIndex() < window.getCandidateCount()) {
-                ProtoCandidateWindow.CandidateWindow.Candidate focused =
-                        window.getCandidate(window.getFocusedIndex());
-                if (focused.hasId()) focusedId = focused.getId();
-            }
-        }
-        List<Candidate> result = new ArrayList<>(source.size());
-        for (Candidate candidate : source) {
-            result.add(new Candidate(candidate.id, candidate.value, candidate.label,
-                    focusedId != null && candidate.id == focusedId));
-        }
-        return result;
     }
 
     private void finishCurrent(long token, boolean submit) {
         if (rawKana.isEmpty() && candidates.isEmpty()) return;
         String fallback = rawKana;
-        if (sessionId != 0 && transport.isAvailable()) {
-            ProtoCommands.Command result = sendCommand(ProtoCommands.SessionCommand.newBuilder()
+        if (sessions.hasSession() && sessions.isAvailable()) {
+            ProtoCommands.Command result = sessions.sendCommand(ProtoCommands.SessionCommand.newBuilder()
                     .setType(submit ? ProtoCommands.SessionCommand.CommandType.SUBMIT
                             : ProtoCommands.SessionCommand.CommandType.REVERT)
-                    .build());
+                    .build(), token, privateMode);
             if (result != null) {
                 project(token, result);
-                sendCommand(ProtoCommands.SessionCommand.newBuilder()
+                sessions.sendCommand(ProtoCommands.SessionCommand.newBuilder()
                         .setType(ProtoCommands.SessionCommand.CommandType.RESET_CONTEXT)
-                        .build());
+                        .build(), token, privateMode);
                 rawKana = "";
                 preeditLength = 0;
                 preeditCursor = 0;
@@ -533,20 +370,10 @@ final class JapaneseImeController implements AutoCloseable {
         emitState(token);
     }
 
-    private void deleteSession() {
-        if (sessionId != 0 && transport.isAvailable()) {
-            evaluate(ProtoCommands.Input.newBuilder()
-                    .setType(ProtoCommands.Input.CommandType.DELETE_SESSION)
-                    .setId(sessionId)
-                    .build());
-        }
-        sessionId = 0;
-    }
-
     private boolean isCurrent(long token) { return currentToken.get() == token; }
 
     private void emitState(long token) {
-        State state = new State(transport.isAvailable(), privateMode, candidates, transport.error());
+        ImeState state = new ImeState(sessions.isAvailable(), privateMode, candidates, sessions.error());
         post(token, () -> listener.onState(token, state));
     }
 
@@ -555,7 +382,7 @@ final class JapaneseImeController implements AutoCloseable {
     }
     private void emitCommit(long token, String text) { post(token, () -> listener.onCommit(token, text)); }
     private void emitDelete(long token, int length) { post(token, () -> listener.onDeleteBefore(token, length)); }
-    private void emitDeleteRange(long token, KeyboardView.DeleteRange range) {
+    private void emitDeleteRange(long token, DeleteRange range) {
         post(token, () -> listener.onDeleteRange(token, range));
     }
     private void emitFinish(long token) {
@@ -574,23 +401,4 @@ final class JapaneseImeController implements AutoCloseable {
             if (isCurrent(token)) callback.run();
         });
     }
-
-    static String transformLast(String text) {
-        return KanaTable.transformLast(text);
-    }
-
-    private static String transformBeforeCursor(String text, int cursor) {
-        return KanaTable.transformBeforeCursor(text, cursor);
-    }
-
-    private static String insertCodePoints(String text, int cursor, String inserted) {
-        return KanaTable.insertCodePoints(text, cursor, inserted);
-    }
-
-    private static String removeCodePointBefore(String text, int cursor) {
-        return KanaTable.removeCodePointBefore(text, cursor);
-    }
-
-    private static int codePointLength(String text) { return KanaTable.codePointLength(text); }
-    private static int clamp(int value, int min, int max) { return KanaTable.clamp(value, min, max); }
 }
