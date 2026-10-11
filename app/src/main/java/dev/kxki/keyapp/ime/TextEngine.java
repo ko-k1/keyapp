@@ -39,5 +39,14 @@ public interface TextEngine extends AutoCloseable {
 
     void abandon();
 
+    /** Current kana composition reading, or empty when not composing Japanese. */
+    String composingReading();
+
+    /**
+     * Registers a user-dictionary word. Returns false when invalid, duplicate,
+     * full, or in private mode.
+     */
+    boolean addUserWord(String reading, String word);
+
     @Override void close();
 }

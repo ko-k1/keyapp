@@ -74,6 +74,28 @@ public final class SettingsActivity extends Activity {
                 KeyboardPrefsRepository.setManualPrivate(preferences, checked));
         root.addView(privacy);
 
+        addSection(root, R.string.section_english);
+        Switch autoCaps = new Switch(this);
+        autoCaps.setText(R.string.auto_caps);
+        autoCaps.setChecked(KeyboardPrefsRepository.autoCapsEnabled(preferences, false));
+        autoCaps.setOnCheckedChangeListener((button, checked) ->
+                KeyboardPrefsRepository.setAutoCapsEnabled(preferences, checked));
+        root.addView(autoCaps);
+
+        Switch doubleSpace = new Switch(this);
+        doubleSpace.setText(R.string.double_space_period);
+        doubleSpace.setChecked(KeyboardPrefsRepository.doubleSpacePeriodEnabled(preferences, true));
+        doubleSpace.setOnCheckedChangeListener((button, checked) ->
+                KeyboardPrefsRepository.setDoubleSpacePeriodEnabled(preferences, checked));
+        root.addView(doubleSpace);
+
+        addSection(root, R.string.section_dictionary);
+        Button dictionary = new Button(this);
+        dictionary.setText(R.string.open_user_dictionary);
+        dictionary.setOnClickListener(view ->
+                startActivity(new Intent(this, UserDictionaryActivity.class)));
+        root.addView(dictionary);
+
         addSection(root, R.string.section_appearance);
         Switch flickPreview = new Switch(this);
         flickPreview.setText(R.string.show_flick_previews);

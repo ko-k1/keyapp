@@ -63,6 +63,22 @@ public final class KeyboardPrefsRepository {
         return preferences.getBoolean(PrefsKeys.ONBOARDING_DONE, false);
     }
 
+    public static boolean autoCapsEnabled(SharedPreferences preferences, boolean defValue) {
+        return preferences.getBoolean(PrefsKeys.AUTO_CAPS, defValue);
+    }
+
+    public static void setAutoCapsEnabled(SharedPreferences preferences, boolean enabled) {
+        preferences.edit().putBoolean(PrefsKeys.AUTO_CAPS, enabled).apply();
+    }
+
+    public static boolean doubleSpacePeriodEnabled(SharedPreferences preferences, boolean defValue) {
+        return preferences.getBoolean(PrefsKeys.DOUBLE_SPACE_PERIOD, defValue);
+    }
+
+    public static void setDoubleSpacePeriodEnabled(SharedPreferences preferences, boolean enabled) {
+        preferences.edit().putBoolean(PrefsKeys.DOUBLE_SPACE_PERIOD, enabled).apply();
+    }
+
     public static void setOnboardingDone(SharedPreferences preferences, boolean done) {
         preferences.edit().putBoolean(PrefsKeys.ONBOARDING_DONE, done).apply();
     }

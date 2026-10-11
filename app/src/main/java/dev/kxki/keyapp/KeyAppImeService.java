@@ -1,10 +1,12 @@
 package dev.kxki.keyapp;
 
 import android.content.SharedPreferences;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.inputmethodservice.InputMethodService;
 import android.os.Build;
+import android.os.SystemClock;
 import android.view.View;
 import android.view.Window;
 import android.view.inputmethod.EditorInfo;
@@ -14,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.kxki.keyapp.clipboard.ClipboardCaptureController;
+import dev.kxki.keyapp.english.EnglishTextRules;
 import dev.kxki.keyapp.ime.ImeCandidate;
 import dev.kxki.keyapp.ime.ImeListener;
 import dev.kxki.keyapp.ime.ImeState;
@@ -35,6 +38,7 @@ public final class KeyAppImeService extends InputMethodService
     private long activeToken;
     private boolean forcedPrivate;
     private boolean manualPrivate;
+    private long lastSpaceMs = Long.MIN_VALUE;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -82,8 +86,10 @@ public final class KeyAppImeService extends InputMethodService
         manualPrivate = KeyboardPrefsRepository.isManualPrivate(preferences);
         clipboard.setPrivate(forcedPrivate || manualPrivate);
         activeToken = controller.begin(forcedPrivate || manualPrivate);
+        lastSpaceMs = Long.MIN_VALUE;
         if (keyboard != null) keyboard.resetForInput();
         clipboard.capture();
+        refreshAutoCaps();
     }
 
     @Override public void onFinishInput() {
@@ -92,6 +98,7 @@ public final class KeyAppImeService extends InputMethodService
         controller.abandon();
         activeToken = 0;
         state = null;
+        lastSpaceMs = Long.MIN_VALUE;
         super.onFinishInput();
     }
 
@@ -106,21 +113,56 @@ public final class KeyAppImeService extends InputMethodService
         super.onDestroy();
     }
 
-    @Override public void onKana(String kana) { controller.kana(kana); }
+    @Override public void onKana(String kana) { lastSpaceMs = Long.MIN_VALUE; controller.kana(kana); }
     @Override public void onKanaModifier() { controller.modifyKana(); }
-    @Override public void onBackspace(boolean japanese) { controller.backspace(japanese); }
-    @Override public void onDeleteRange(DeleteRange range) { controller.deleteRange(range); }
-    @Override public void onSpace(boolean japanese) { controller.space(japanese); }
+    @Override public void onBackspace(boolean japanese) {
+        lastSpaceMs = Long.MIN_VALUE;
+        controller.backspace(japanese);
+    }
+    @Override public void onDeleteRange(DeleteRange range) {
+        lastSpaceMs = Long.MIN_VALUE;
+        controller.deleteRange(range);
+    }
+    @Override public void onSpace(boolean japanese) {
+        if (!japanese && tryDoubleSpacePeriod()) return;
+        lastSpaceMs = japanese ? Long.MIN_VALUE : SystemClock.uptimeMillis();
+        controller.space(japanese);
+    }
     @Override public void onCursorMove(int horizontal, int vertical) {
         controller.moveCursor(horizontal, vertical);
     }
-    @Override public void onEnter() { controller.enter(); }
-    @Override public void onRawText(String text) { controller.rawText(text); }
+    @Override public void onEnter() {
+        lastSpaceMs = Long.MIN_VALUE;
+        controller.enter();
+    }
+    @Override public void onRawText(String text) {
+        lastSpaceMs = Long.MIN_VALUE;
+        controller.rawText(text);
+    }
     @Override public void onJapaneseChanged(boolean enabled) { controller.setJapanese(enabled); }
     @Override public void onCandidate(int candidateId) { controller.selectCandidate(candidateId); }
 
     @Override public void onClipboardClear() {
         clipboard.clearHistory();
+    }
+
+    @Override public void onAddWordRequested() {
+        String reading = "";
+        try {
+            reading = controller.composingReading();
+        } catch (RuntimeException ignored) {
+            reading = "";
+        }
+        Intent intent = new Intent(this, UserDictionaryActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (reading != null && !reading.isEmpty()) {
+            intent.putExtra(UserDictionaryActivity.EXTRA_READING, reading);
+        }
+        try {
+            startActivity(intent);
+        } catch (RuntimeException ignored) {
+            // Never break typing when the activity cannot start.
+        }
     }
 
     @Override public void onPrivateModeToggle() {
@@ -141,11 +183,13 @@ public final class KeyAppImeService extends InputMethodService
     @Override public void onCommit(long token, String text) {
         InputConnection connection = connection(token);
         if (connection != null) connection.commitText(text, 1);
+        refreshAutoCaps();
     }
 
     @Override public void onDeleteBefore(long token, int length) {
         InputConnection connection = connection(token);
         if (connection != null) connection.deleteSurroundingText(length, 0);
+        refreshAutoCaps();
     }
 
     @Override public void onDeleteRange(long token, DeleteRange range) {
@@ -193,6 +237,57 @@ public final class KeyAppImeService extends InputMethodService
 
     private void updateClipboardView() {
         if (keyboard != null) keyboard.setClipboardHistory(clipboard.history());
+    }
+
+    /** Converts a fast second space into ". " on the English panel. */
+    private boolean tryDoubleSpacePeriod() {
+        SharedPreferences preferences =
+                getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
+        if (!KeyboardPrefsRepository.doubleSpacePeriodEnabled(preferences, true)) return false;
+        InputConnection connection = getCurrentInputConnection();
+        if (connection == null || activeToken == 0) return false;
+        CharSequence before;
+        try {
+            before = connection.getTextBeforeCursor(2, 0);
+        } catch (Exception ignored) {
+            return false;
+        }
+        long now = SystemClock.uptimeMillis();
+        if (!EnglishTextRules.isDoubleSpace(now, lastSpaceMs, before)) return false;
+        try {
+            connection.beginBatchEdit();
+            connection.deleteSurroundingText(1, 0);
+            connection.commitText(". ", 1);
+        } catch (RuntimeException ignored) {
+            return false;
+        } finally {
+            try {
+                connection.endBatchEdit();
+            } catch (RuntimeException ignored) {
+                // Batch bookkeeping must never break typing.
+            }
+        }
+        lastSpaceMs = Long.MIN_VALUE;
+        refreshAutoCaps();
+        return true;
+    }
+
+    /** Enables shift at sentence starts on the English panel. */
+    private void refreshAutoCaps() {
+        if (keyboard == null || !keyboard.isEnglishPanel()) return;
+        SharedPreferences preferences =
+                getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
+        if (!KeyboardPrefsRepository.autoCapsEnabled(preferences, false)) return;
+        InputConnection connection = getCurrentInputConnection();
+        if (connection == null) return;
+        CharSequence before;
+        try {
+            before = connection.getTextBeforeCursor(EnglishTextRules.AUTO_CAPS_LOOKBACK, 0);
+        } catch (Exception ignored) {
+            return;
+        }
+        if (before == null) return;
+        keyboard.setShiftForAutoCaps(EnglishTextRules.shouldAutoCapitalize(before));
     }
 
     private void loadKeyboardSize() {

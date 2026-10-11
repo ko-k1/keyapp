@@ -24,6 +24,7 @@ import dev.kxki.keyapp.keyboard.CursorPhysics;
 import dev.kxki.keyapp.keyboard.DeleteRange;
 import dev.kxki.keyapp.keyboard.KeyLayout;
 import dev.kxki.keyapp.keyboard.KeyboardGeometry;
+import dev.kxki.keyapp.english.EnglishTextRules;
 
 /** Draws keys and candidates only.  The service owns every composition decision. */
 public final class KeyboardView extends View {
@@ -40,6 +41,7 @@ public final class KeyboardView extends View {
         void onCandidate(int candidateId);
         void onPrivateModeToggle();
         void onClipboardClear();
+        void onAddWordRequested();
     }
 
     public static final class Candidate {
@@ -143,6 +145,7 @@ public final class KeyboardView extends View {
         float candidateY;
         boolean candidateDrag;
         boolean shiftLongPressed;
+        boolean keyLongPressed;
         boolean cursorMode;
         boolean clipboardDrag;
         float cursorX;
@@ -153,6 +156,7 @@ public final class KeyboardView extends View {
         String clipboardText;
         Runnable repeat;
         Runnable shiftLongPress;
+        Runnable keyLongPress;
         Runnable spaceLongPress;
         Runnable flickLongPress;
         String[] flicks;
@@ -230,6 +234,29 @@ public final class KeyboardView extends View {
 
     public void setHapticEnabled(boolean enabled) {
         hapticEnabled = enabled;
+    }
+
+    /** Raw English panel: auto-caps and letter long-press apply here only. */
+    public boolean isEnglishPanel() {
+        return !japanese && !symbols && !numberMode && !clipboard;
+    }
+
+    /**
+     * Applies service-computed auto-caps. Never fights an explicit caps lock
+     * and never touches Japanese/symbol panels.
+     */
+    public void setShiftForAutoCaps(boolean caps) {
+        if (shiftLocked || !isEnglishPanel()) return;
+        if (shifted != caps) {
+            shifted = caps;
+            invalidate();
+        }
+    }
+
+    /** Whether the "+" register affordance is visible in the candidate bar. */
+    public boolean showAddWord() {
+        return japanese && !symbols && !numberMode && !clipboard
+                && engineAvailable && !privateMode && !candidates.isEmpty();
     }
 
     public void setAction(OnKeyboardAction action) {
@@ -538,7 +565,7 @@ public final class KeyboardView extends View {
 
         float bar = dp(CANDIDATE_BAR_DP);
         float left = keyboardLeft() + dp(34);
-        float right = keyboardRight() - dp(36);
+        float right = candidateStripRight();
         float availableWidth = right - left;
         float contentWidth = 0;
         float focusedLeft = -1;
@@ -590,7 +617,7 @@ public final class KeyboardView extends View {
         if (!japanese || candidates.isEmpty() || !engineAvailable) return;
         float bar = dp(CANDIDATE_BAR_DP);
         float left = keyboardLeft() + dp(34);
-        float right = keyboardRight() - dp(36);
+        float right = candidateStripRight();
 
         canvas.save();
         canvas.clipRect(left, 0, right, bar);
@@ -641,7 +668,7 @@ public final class KeyboardView extends View {
         }
 
         float left = keyboardLeft() + dp(34);
-        float right = keyboardRight() - dp(36);
+        float right = candidateStripRight();
         canvas.save();
         canvas.clipRect(left, 0, right, bar);
         float x = left - candidateStripScroll;
@@ -655,6 +682,7 @@ public final class KeyboardView extends View {
             x += width;
         }
         canvas.restore();
+        drawAddWordButton(canvas, bar);
         paint.setColor(Color.rgb(210, 210, 230));
         paint.setTextSize(dp(18));
         canvas.drawText(candidatesExpanded ? "⌃" : "⌄", keyboardRight() - dp(18),
@@ -682,6 +710,26 @@ public final class KeyboardView extends View {
                 canvas.drawText(candidate.label, rect.right - dp(12), centeredY(rect.centerY()), paint);
             }
         }
+    }
+
+    private float candidateStripRight() {
+        return keyboardRight() - dp(showAddWord() ? 74 : 36);
+    }
+
+    private RectF addWordRect(float bar) {
+        float right = keyboardRight();
+        return new RectF(right - dp(70), dp(4), right - dp(42), bar - dp(4));
+    }
+
+    private void drawAddWordButton(Canvas canvas, float bar) {
+        if (!showAddWord()) return;
+        RectF rect = addWordRect(bar);
+        paint.setColor(dev.kxki.keyapp.keyboard.KeyboardTheme.CANDIDATE_CHIP);
+        canvas.drawRoundRect(rect, dp(8), dp(8), paint);
+        paint.setColor(Color.rgb(225, 225, 238));
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTextSize(dp(18));
+        canvas.drawText("+", rect.centerX(), centeredY(rect.centerY()), paint);
     }
 
     private float candidateAreaHeight() {
@@ -881,6 +929,22 @@ public final class KeyboardView extends View {
                 invalidate();
             };
             repeatHandler.postDelayed(state.shiftLongPress, ViewConfiguration.getLongPressTimeout());
+        } else if (state.key != null && isEnglishPanel()
+                && EnglishTextRules.longPressAlt(state.key.value) != null) {
+            final String alt = EnglishTextRules.longPressAlt(state.key.value);
+            state.keyLongPress = () -> {
+                if (pointers.get(id) != state) return;
+                state.keyLongPressed = true;
+                if (action != null) action.onRawText(alt);
+                startFade(state.key.rect(), dp(keyRadiusDp));
+                try {
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                } catch (RuntimeException ignored) {
+                    // Haptics must never break key handling.
+                }
+                invalidate();
+            };
+            repeatHandler.postDelayed(state.keyLongPress, ViewConfiguration.getLongPressTimeout());
         } else if (state.key != null && " ".equals(state.key.value)) {
             state.spaceLongPress = () -> {
                 if (pointers.get(id) != state) return;
@@ -995,6 +1059,8 @@ public final class KeyboardView extends View {
             handleCandidateTouch(x, y, state.candidateDrag);
         } else if (state.clipboardDrag) {
             // Vertical scroll: suppress the tap, including Clear.
+        } else if (state.keyLongPressed) {
+            // Long-press alternate already committed; suppress the base letter.
         } else if (state.key != null
                 && !(state.shiftLongPressed && "#shift".equals(state.key.value))) {
             performClick();
@@ -1022,6 +1088,7 @@ public final class KeyboardView extends View {
 
     private void cancelCallbacks(PointerState state) {        if (state.repeat != null) repeatHandler.removeCallbacks(state.repeat);
         if (state.shiftLongPress != null) repeatHandler.removeCallbacks(state.shiftLongPress);
+        if (state.keyLongPress != null) repeatHandler.removeCallbacks(state.keyLongPress);
         if (state.spaceLongPress != null) repeatHandler.removeCallbacks(state.spaceLongPress);
         if (state.flickLongPress != null) repeatHandler.removeCallbacks(state.flickLongPress);
     }
@@ -1069,6 +1136,12 @@ public final class KeyboardView extends View {
         if (dragged) return;
         if (x < keyboardLeft() + dp(34) && y < dp(CANDIDATE_BAR_DP)) {
             if (action != null) action.onPrivateModeToggle();
+            return;
+        }
+        if (y < dp(CANDIDATE_BAR_DP) && showAddWord()
+                && addWordRect(dp(CANDIDATE_BAR_DP)).contains(x, y)) {
+            startFade(addWordRect(dp(CANDIDATE_BAR_DP)), dp(8));
+            if (action != null) action.onAddWordRequested();
             return;
         }
         if (x > keyboardRight() - dp(38) && y < dp(CANDIDATE_BAR_DP)

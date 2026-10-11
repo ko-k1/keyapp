@@ -10,6 +10,8 @@ public final class PrefsKeys {
     public static final String HAPTIC_ENABLED = "haptic_enabled";
     public static final String KEY_FADE_ENABLED = "key_fade_enabled";
     public static final String ONBOARDING_DONE = "onboarding_done";
+    public static final String AUTO_CAPS = "auto_caps";
+    public static final String DOUBLE_SPACE_PERIOD = "double_space_period";
 
     private PrefsKeys() {}
 }

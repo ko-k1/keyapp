@@ -22,6 +22,11 @@ import dev.kxki.keyapp.ime.SessionManager;
 import dev.kxki.keyapp.ime.TextEngine;
 import dev.kxki.keyapp.kana.KanaTable;
 import dev.kxki.keyapp.keyboard.DeleteRange;
+import dev.kxki.keyapp.userdict.SharedPreferencesUserDictionary;
+import dev.kxki.keyapp.userdict.UserDictionaryEntry;
+import dev.kxki.keyapp.userdict.UserDictionaryProvider;
+
+import java.util.ArrayList;
 
 /** Serializes Mozc and projects its protocol output into Android edit operations. */
 public final class JapaneseImeController implements TextEngine {
@@ -32,18 +37,26 @@ public final class JapaneseImeController implements TextEngine {
     private final Executor callbacks;
     private final ExecutorService ownedExecutor;
     private final AtomicLong currentToken = new AtomicLong();
+    private final UserDictionaryProvider userDictionary;
+
+    /** Negative ids for locally injected user-dictionary candidates. */
+    static final int USER_DICT_ID_BASE = -1000000;
+    static final int MAX_USER_CANDIDATES = 3;
+    static final String USER_DICT_LABEL = "辞書";
 
     // Accessed only by serial.
     private boolean japanese;
     private boolean privateMode;
-    private String rawKana = "";
+    private volatile String rawKana = "";
     private int preeditLength;
     private int preeditCursor;
     private List<ImeCandidate> candidates = Collections.emptyList();
+    private List<ImeCandidate> lastUserCandidates = Collections.emptyList();
 
     public JapaneseImeController(Context context, ImeListener listener) {
         this.sessions = new SessionManager(new MozcEngine(context));
         this.listener = listener;
+        this.userDictionary = new SharedPreferencesUserDictionary(context);
         this.ownedExecutor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "KeyApp-Mozc");
             thread.setDaemon(true);
@@ -55,11 +68,26 @@ public final class JapaneseImeController implements TextEngine {
     }
 
     public JapaneseImeController(ImeTransport transport, ImeListener listener, Executor serial, Executor callbacks) {
+        this(transport, listener, serial, callbacks, emptyUserDictionary());
+    }
+
+    public JapaneseImeController(ImeTransport transport, ImeListener listener, Executor serial,
+            Executor callbacks, UserDictionaryProvider userDictionary) {
         this.sessions = new SessionManager(transport);
         this.listener = listener;
         this.serial = serial;
         this.callbacks = callbacks;
+        this.userDictionary = userDictionary == null ? emptyUserDictionary() : userDictionary;
         this.ownedExecutor = null;
+    }
+
+    static UserDictionaryProvider emptyUserDictionary() {
+        return new UserDictionaryProvider() {
+            @Override public java.util.List<UserDictionaryEntry> entries() {
+                return Collections.emptyList();
+            }
+            @Override public boolean add(String reading, String word) { return false; }
+        };
     }
 
     @Override public long begin(boolean isPrivate) {
@@ -236,12 +264,61 @@ public final class JapaneseImeController implements TextEngine {
     @Override public void selectCandidate(int candidateId) {
         long token = currentToken.get();
         serial.execute(() -> {
-            if (!isCurrent(token) || !sessions.hasSession() || !sessions.isAvailable()) return;
+            if (!isCurrent(token)) return;
+            if (candidateId < 0) {
+                commitUserCandidate(token, candidateId);
+                return;
+            }
+            if (!sessions.hasSession() || !sessions.isAvailable()) return;
             project(token, sessions.sendCommand(ProtoCommands.SessionCommand.newBuilder()
                     .setType(ProtoCommands.SessionCommand.CommandType.SUBMIT_CANDIDATE)
                     .setId(candidateId)
                     .build(), token, privateMode));
         });
+    }
+
+    @Override public String composingReading() {
+        return japanese ? rawKana : "";
+    }
+
+    @Override public boolean addUserWord(String reading, String word) {
+        if (privateMode) return false;
+        boolean added = userDictionary.add(reading, word);
+        if (added) {
+            long token = currentToken.get();
+            serial.execute(() -> {
+                if (isCurrent(token)) emitState(token);
+            });
+        }
+        return added;
+    }
+
+    private void commitUserCandidate(long token, int candidateId) {
+        String word = null;
+        for (ImeCandidate candidate : lastUserCandidates) {
+            if (candidate.id == candidateId) {
+                word = candidate.value;
+                break;
+            }
+        }
+        if (word == null || word.isEmpty()) return;
+        if (sessions.hasSession() && sessions.isAvailable()) {
+            sessions.sendCommand(ProtoCommands.SessionCommand.newBuilder()
+                    .setType(ProtoCommands.SessionCommand.CommandType.REVERT)
+                    .build(), token, privateMode);
+            sessions.sendCommand(ProtoCommands.SessionCommand.newBuilder()
+                    .setType(ProtoCommands.SessionCommand.CommandType.RESET_CONTEXT)
+                    .build(), token, privateMode);
+        }
+        final String committed = word;
+        rawKana = "";
+        preeditLength = 0;
+        preeditCursor = 0;
+        candidates = Collections.emptyList();
+        lastUserCandidates = Collections.emptyList();
+        emitCommit(token, committed);
+        emitFinish(token);
+        emitState(token);
     }
 
     @Override public void rawText(String text) {
@@ -374,8 +451,47 @@ public final class JapaneseImeController implements TextEngine {
     private boolean isCurrent(long token) { return currentToken.get() == token; }
 
     private void emitState(long token) {
-        ImeState state = new ImeState(sessions.isAvailable(), privateMode, candidates, sessions.error());
+        List<ImeCandidate> displayed = displayedCandidates();
+        ImeState state = new ImeState(sessions.isAvailable(), privateMode, displayed, sessions.error());
         post(token, () -> listener.onState(token, state));
+    }
+
+    /** Merges local user-dictionary matches ahead of Mozc candidates. */
+    private List<ImeCandidate> displayedCandidates() {
+        List<ImeCandidate> userMatches = userMatches(rawKana, japanese, privateMode);
+        lastUserCandidates = userMatches;
+        if (userMatches.isEmpty()) return candidates;
+        List<ImeCandidate> merged = new ArrayList<>(userMatches.size() + candidates.size());
+        merged.addAll(userMatches);
+        merged.addAll(candidates);
+        return merged;
+    }
+
+    List<ImeCandidate> userMatches(String reading, boolean japaneseMode, boolean incognito) {
+        if (!japaneseMode || incognito || reading == null || reading.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<UserDictionaryEntry> all;
+        try {
+            all = userDictionary.entries();
+        } catch (RuntimeException ignored) {
+            return Collections.emptyList();
+        }
+        if (all == null || all.isEmpty()) return Collections.emptyList();
+        List<UserDictionaryEntry> matches = new ArrayList<>();
+        for (UserDictionaryEntry entry : all) {
+            if (entry != null && entry.reading.startsWith(reading)) matches.add(entry);
+        }
+        matches.sort((first, second) -> {
+            int byReading = Integer.compare(first.reading.length(), second.reading.length());
+            return byReading != 0 ? byReading : first.word.compareTo(second.word);
+        });
+        List<ImeCandidate> result = new ArrayList<>(Math.min(MAX_USER_CANDIDATES, matches.size()));
+        for (int i = 0; i < matches.size() && i < MAX_USER_CANDIDATES; i++) {
+            result.add(new ImeCandidate(
+                    USER_DICT_ID_BASE - i, matches.get(i).word, USER_DICT_LABEL, false));
+        }
+        return result;
     }
 
     private void emitComposing(long token, String text, int cursor) {
