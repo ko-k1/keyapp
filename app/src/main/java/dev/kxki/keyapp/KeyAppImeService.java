@@ -18,6 +18,8 @@ import dev.kxki.keyapp.ime.ImeCandidate;
 import dev.kxki.keyapp.ime.ImeListener;
 import dev.kxki.keyapp.ime.ImeState;
 import dev.kxki.keyapp.ime.InputConnectionOps;
+import dev.kxki.keyapp.ime.TextEngine;
+import dev.kxki.keyapp.ime.TextEngineFactory;
 import dev.kxki.keyapp.keyboard.DeleteRange;
 import dev.kxki.keyapp.prefs.KeyboardPrefsRepository;
 import dev.kxki.keyapp.prefs.PrefsKeys;
@@ -26,7 +28,7 @@ import dev.kxki.keyapp.privacy.PrivacyPolicy;
 public final class KeyAppImeService extends InputMethodService
         implements KeyboardView.OnKeyboardAction, ImeListener {
 
-    private JapaneseImeController controller;
+    private TextEngine controller;
     private KeyboardView keyboard;
     private ClipboardCaptureController clipboard;
     private ImeState state;
@@ -36,7 +38,7 @@ public final class KeyAppImeService extends InputMethodService
 
     @Override public void onCreate() {
         super.onCreate();
-        controller = new JapaneseImeController(this, this);
+        controller = TextEngineFactory.create(this, this);
         clipboard = new ClipboardCaptureController(this);
         clipboard.setOnChanged(this::updateClipboardView);
         clipboard.start();

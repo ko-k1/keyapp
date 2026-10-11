@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">KeyApp</string>
+    <string name="ime_name">KeyApp オフライン日本語キーボード</string>
+    <string name="always_private">常にプライベートモードを使う</string>
+    <string name="show_flick_previews">日本語フリックプレビューを表示</string>
+    <string name="key_spacing">キー間隔: %1$d dp</string>
+    <string name="key_roundness">角丸: %1$d dp</string>
+    <string name="resize_keyboard">キーボードサイズ変更</string>
+    <string name="resize_keyboard_instructions">内側をドラッグで移動。枠や角をドラッグでサイズ変更。</string>
+    <string name="clear_learning">学習履歴と予測を消去</string>
+    <string name="open_source_notices">オープンソース表示</string>
+    <string name="open_keyboard_settings">Androidキーボード設定を開く</string>
+    <string name="settings_title">KeyApp キーボード\nオフライン日本語12キーIME</string>
+    <string name="reset">リセット</string>
+    <string name="cancel">キャンセル</string>
+    <string name="save">保存</string>
+    <string name="clear">消去</string>
+    <string name="close">閉じる</string>
+    <string name="clear_learning_title">端末内の学習を消去しますか?</string>
+    <string name="clear_learning_message">この端末にのみ保存されたMozcの履歴と予測を削除します。</string>
+    <string name="learning_cleared">学習を消去しました</string>
+    <string name="mozc_unavailable">Mozcは利用できません</string>
+    <string name="notices_unavailable">表示を利用できません</string>
+    <string name="setup_keyboard">キーボードを設定</string>
+    <string name="haptic_feedback">キー押下で振動</string>
+    <string name="key_fade">キー押下アニメーション</string>
+    <string name="section_setup">セットアップ</string>
+    <string name="section_privacy">プライバシー</string>
+    <string name="section_appearance">外観と操作感</string>
+    <string name="section_maintenance">メンテナンス</string>
+    <string name="onboarding_title">KeyAppのセットアップ</string>
+    <string name="onboarding_intro">オフライン日本語キーボード。3ステップで入力開始。</string>
+    <string name="onboarding_enable">1: システム設定でKeyAppを有効化</string>
+    <string name="onboarding_select">2: KeyAppに切り替え</string>
+    <string name="onboarding_try">3: キーボードを試す</string>
+    <string name="onboarding_done">完了 — 設定を開く</string>
+    <string name="onboarding_enabled_yes">✓ KeyAppは有効です</string>
+    <string name="onboarding_enabled_no">○ KeyAppはまだ有効ではありません</string>
+    <string name="onboarding_selected_yes">✓ KeyAppが選択されています</string>
+    <string name="onboarding_selected_no">○ KeyAppはまだ選択されていません</string>
+    <string name="keyboard_content_description">KeyAppキーボード。上に候補、下にキー。</string>
+</resources>

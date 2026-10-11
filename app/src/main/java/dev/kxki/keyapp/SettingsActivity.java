@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
@@ -19,9 +20,17 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Scanner;
 
+import dev.kxki.keyapp.onboarding.OnboardingActivity;
 import dev.kxki.keyapp.prefs.KeyboardPrefsRepository;
 import dev.kxki.keyapp.prefs.PrefsKeys;
 
+/**
+ * Sectioned settings for general users.
+ *
+ * <p>Previously a flat list with no setup guidance. Now: Setup (onboarding + system
+ * settings), Privacy, Appearance and feel (including the new haptic and fade
+ * switches), and Maintenance (resize, clear learning, notices, version).
+ */
 public final class SettingsActivity extends Activity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -43,6 +52,21 @@ public final class SettingsActivity extends Activity {
 
         SharedPreferences preferences =
                 getSharedPreferences(PrefsKeys.PREFERENCES, MODE_PRIVATE);
+
+        addSection(root, R.string.section_setup);
+        Button setup = new Button(this);
+        setup.setText(R.string.setup_keyboard);
+        setup.setOnClickListener(view ->
+                startActivity(new Intent(this, OnboardingActivity.class)));
+        root.addView(setup);
+
+        Button settings = new Button(this);
+        settings.setText(R.string.open_keyboard_settings);
+        settings.setOnClickListener(view ->
+                startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
+        root.addView(settings);
+
+        addSection(root, R.string.section_privacy);
         Switch privacy = new Switch(this);
         privacy.setText(R.string.always_private);
         privacy.setChecked(KeyboardPrefsRepository.isManualPrivate(preferences));
@@ -50,12 +74,27 @@ public final class SettingsActivity extends Activity {
                 KeyboardPrefsRepository.setManualPrivate(preferences, checked));
         root.addView(privacy);
 
+        addSection(root, R.string.section_appearance);
         Switch flickPreview = new Switch(this);
         flickPreview.setText(R.string.show_flick_previews);
         flickPreview.setChecked(KeyboardPrefsRepository.flickPreview(preferences, true));
         flickPreview.setOnCheckedChangeListener((button, checked) ->
                 KeyboardPrefsRepository.setFlickPreview(preferences, checked));
         root.addView(flickPreview);
+
+        Switch haptic = new Switch(this);
+        haptic.setText(R.string.haptic_feedback);
+        haptic.setChecked(KeyboardPrefsRepository.hapticEnabled(preferences, true));
+        haptic.setOnCheckedChangeListener((button, checked) ->
+                KeyboardPrefsRepository.setHapticEnabled(preferences, checked));
+        root.addView(haptic);
+
+        Switch fade = new Switch(this);
+        fade.setText(R.string.key_fade);
+        fade.setChecked(KeyboardPrefsRepository.keyFadeEnabled(preferences, true));
+        fade.setOnCheckedChangeListener((button, checked) ->
+                KeyboardPrefsRepository.setKeyFadeEnabled(preferences, checked));
+        root.addView(fade);
 
         addSlider(root, preferences, R.string.key_spacing,
                 KeyboardPrefsRepository.KEY_GAP_SETTING,
@@ -64,6 +103,7 @@ public final class SettingsActivity extends Activity {
                 KeyboardPrefsRepository.KEY_RADIUS_SETTING,
                 KeyboardView.DEFAULT_KEY_RADIUS_DP, KeyboardView.MAX_KEY_RADIUS_DP);
 
+        addSection(root, R.string.section_maintenance);
         Button resize = new Button(this);
         resize.setText(R.string.resize_keyboard);
         resize.setOnClickListener(view ->
@@ -85,14 +125,33 @@ public final class SettingsActivity extends Activity {
         notices.setOnClickListener(view -> showNotices());
         root.addView(notices);
 
-        Button settings = new Button(this);
-        settings.setText(R.string.open_keyboard_settings);
-        settings.setOnClickListener(view ->
-                startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
-        root.addView(settings);
+        TextView version = new TextView(this);
+        version.setText(versionName());
+        version.setGravity(Gravity.CENTER);
+        version.setPadding(0, 24, 0, 0);
+        root.addView(version);
+
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
         setContentView(scroll);
+    }
+
+    private void addSection(LinearLayout root, int labelResource) {
+        TextView section = new TextView(this);
+        section.setText(labelResource);
+        section.setTextSize(16);
+        section.setPadding(0, 32, 0, 8);
+        section.setGravity(Gravity.CENTER);
+        root.addView(section);
+    }
+
+    private String versionName() {
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return getString(R.string.app_name) + " " + info.versionName;
+        } catch (Exception ignored) {
+            return getString(R.string.app_name);
+        }
     }
 
     private void addSlider(LinearLayout root, SharedPreferences preferences, int labelResource,

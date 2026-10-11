@@ -21,4 +21,22 @@
     <string name="learning_cleared">Local learning cleared</string>
     <string name="mozc_unavailable">Mozc is unavailable</string>
     <string name="notices_unavailable">Notices are unavailable</string>
+    <string name="setup_keyboard">Set up keyboard</string>
+    <string name="haptic_feedback">Haptic feedback on key press</string>
+    <string name="key_fade">Key press fade animation</string>
+    <string name="section_setup">Setup</string>
+    <string name="section_privacy">Privacy</string>
+    <string name="section_appearance">Appearance and feel</string>
+    <string name="section_maintenance">Maintenance</string>
+    <string name="onboarding_title">Set up KeyApp</string>
+    <string name="onboarding_intro">Offline Japanese keyboard. Three steps to start typing.</string>
+    <string name="onboarding_enable">1: Enable KeyApp in system settings</string>
+    <string name="onboarding_select">2: Switch to KeyApp</string>
+    <string name="onboarding_try">3: Try the keyboard layout</string>
+    <string name="onboarding_done">Done — open settings</string>
+    <string name="onboarding_enabled_yes">✓ KeyApp is enabled</string>
+    <string name="onboarding_enabled_no">○ KeyApp is not enabled yet</string>
+    <string name="onboarding_selected_yes">✓ KeyApp is selected</string>
+    <string name="onboarding_selected_no">○ KeyApp is not selected yet</string>
+    <string name="keyboard_content_description">KeyApp keyboard. Candidates above, keys below.</string>
 </resources>

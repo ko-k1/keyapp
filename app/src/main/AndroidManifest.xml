@@ -20,6 +20,10 @@
             android:name=".KeyboardResizeActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".onboarding.OnboardingActivity"
+            android:exported="false" />
+
         <service
             android:name=".KeyAppImeService"
             android:label="@string/ime_name"

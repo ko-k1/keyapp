@@ -70,7 +70,8 @@ public final class KeyboardView extends View {
     public static final int DEFAULT_KEY_RADIUS_DP = 4;
     public static final int MAX_KEY_GAP_DP = 12;
     public static final int MAX_KEY_RADIUS_DP = 24;
-    private static final int HIGHLIGHT_COLOR = 0xff50506e;
+    private static final int HIGHLIGHT_COLOR =
+            dev.kxki.keyapp.keyboard.KeyboardTheme.HIGHLIGHT;
     private static final long KEY_FADE_DURATION_MS = 160;
     private static final int MAX_FADES = 10;
 
@@ -98,6 +99,7 @@ public final class KeyboardView extends View {
     private boolean engineAvailable;
     private boolean privateMode;
     private boolean flickPreviewEnabled = true;
+    private boolean hapticEnabled = true;
     private int candidateScroll;
     private float candidateStripScroll;
     private float candidateStripMaxScroll;
@@ -200,6 +202,34 @@ public final class KeyboardView extends View {
         super(context);
         setBackgroundColor(Color.TRANSPARENT);
         setMinimumHeight(dp(NORMAL_HEIGHT_DP));
+        setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
+        try {
+            setContentDescription(context.getString(R.string.keyboard_content_description));
+        } catch (android.content.res.Resources.NotFoundException ignored) {
+            setContentDescription("KeyApp keyboard");
+        }
+    }
+
+    /** Immutable snapshot of the current panel/shift state for new architecture code. */
+    public dev.kxki.keyapp.keyboard.KeyboardMode mode() {
+        return new dev.kxki.keyapp.keyboard.KeyboardMode(
+                japanese, symbols, numberMode, clipboard, shifted, shiftLocked);
+    }
+
+    /** Applies a {@link dev.kxki.keyapp.keyboard.KeyboardMode} to the legacy booleans. */
+    public void applyMode(dev.kxki.keyapp.keyboard.KeyboardMode mode) {
+        if (mode == null) return;
+        japanese = mode.japanese;
+        symbols = mode.symbols;
+        numberMode = mode.numberMode;
+        clipboard = mode.clipboard;
+        shifted = mode.shifted;
+        shiftLocked = mode.shiftLocked;
+        invalidate();
+    }
+
+    public void setHapticEnabled(boolean enabled) {
+        hapticEnabled = enabled;
     }
 
     public void setAction(OnKeyboardAction action) {
@@ -242,12 +272,12 @@ public final class KeyboardView extends View {
         invalidate();
     }
 
-    void setKeyFadeEnabled(boolean enabled) {
+    public void setKeyFadeEnabled(boolean enabled) {
         keyFadeEnabled = enabled;
         if (!enabled) clearFades();
     }
 
-    void setKeyFadeDurationMs(long durationMs) {
+    public void setKeyFadeDurationMs(long durationMs) {
         keyFadeDurationMs = Math.max(0, durationMs);
         if (keyFadeDurationMs <= 0) clearFades();
     }
@@ -339,7 +369,7 @@ public final class KeyboardView extends View {
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         buildKeys();
-        paint.setColor(Color.argb(160, 30, 30, 40));
+        paint.setColor(dev.kxki.keyapp.keyboard.KeyboardTheme.SCRIM);
         canvas.drawRect(0, 0, getWidth(), getHeight(), paint);
         // Layer order matters: backgrounds, then release-fade overlays, then
         // labels on top. This mirrors the pressed state (text over highlight);
@@ -361,7 +391,8 @@ public final class KeyboardView extends View {
             boolean shift = "#shift".equals(key.value);
             boolean highlighted = isPressed(key) || (shift && shiftLocked);
             RectF rect = key.rect();
-            paint.setColor(highlighted ? HIGHLIGHT_COLOR : Color.argb(190, 50, 50, 65));
+            paint.setColor(highlighted ? HIGHLIGHT_COLOR
+                    : dev.kxki.keyapp.keyboard.KeyboardTheme.KEY_BACKGROUND);
             canvas.drawRoundRect(rect, dp(keyRadiusDp), dp(keyRadiusDp), paint);
         }
     }
@@ -426,11 +457,7 @@ public final class KeyboardView extends View {
     }
 
     private static int blendColors(int from, int to, float t) {
-        return Color.argb(
-                Math.round(Color.alpha(from) + (Color.alpha(to) - Color.alpha(from)) * t),
-                Math.round(Color.red(from) + (Color.red(to) - Color.red(from)) * t),
-                Math.round(Color.green(from) + (Color.green(to) - Color.green(from)) * t),
-                Math.round(Color.blue(from) + (Color.blue(to) - Color.blue(from)) * t));
+        return dev.kxki.keyapp.keyboard.KeyboardTheme.blend(from, to, t);
     }
 
     private int pruneFades() {
@@ -572,7 +599,7 @@ public final class KeyboardView extends View {
         for (Candidate candidate : candidates) {
             float width = candidateWidth(candidate);
             RectF rect = new RectF(x, dp(4), x + width - dp(4), bar - dp(4));
-            paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : Color.argb(120, 68, 68, 92));
+            paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : dev.kxki.keyapp.keyboard.KeyboardTheme.CANDIDATE_CHIP);
             canvas.drawRoundRect(rect, dp(8), dp(8), paint);
             x += width;
         }
@@ -589,7 +616,7 @@ public final class KeyboardView extends View {
             Candidate candidate = candidates.get(index);
             RectF rect = new RectF(keyboardLeft() + dp(8), top + row * rowHeight + dp(2),
                     keyboardRight() - dp(8), top + (row + 1) * rowHeight - dp(2));
-            paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : Color.argb(140, 68, 68, 92));
+            paint.setColor(candidate.focused ? HIGHLIGHT_COLOR : dev.kxki.keyapp.keyboard.KeyboardTheme.CANDIDATE_ROW);
             canvas.drawRoundRect(rect, dp(7), dp(7), paint);
         }
     }
@@ -971,6 +998,7 @@ public final class KeyboardView extends View {
         } else if (state.key != null
                 && !(state.shiftLongPressed && "#shift".equals(state.key.value))) {
             performClick();
+            tapHaptic();
             if (state.key.value.startsWith("#clipboard:")) {
                 String text = ClipboardLogic.resolvePaste(
                         state.key.value, clipboardHistory, state.clipboardText);
@@ -983,8 +1011,16 @@ public final class KeyboardView extends View {
         invalidate();
     }
 
-    private void cancelCallbacks(PointerState state) {
-        if (state.repeat != null) repeatHandler.removeCallbacks(state.repeat);
+    private void tapHaptic() {
+        if (!hapticEnabled) return;
+        try {
+            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+        } catch (RuntimeException ignored) {
+            // Haptics must never break key handling.
+        }
+    }
+
+    private void cancelCallbacks(PointerState state) {        if (state.repeat != null) repeatHandler.removeCallbacks(state.repeat);
         if (state.shiftLongPress != null) repeatHandler.removeCallbacks(state.shiftLongPress);
         if (state.spaceLongPress != null) repeatHandler.removeCallbacks(state.spaceLongPress);
         if (state.flickLongPress != null) repeatHandler.removeCallbacks(state.flickLongPress);

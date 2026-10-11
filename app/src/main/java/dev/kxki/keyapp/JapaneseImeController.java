@@ -19,11 +19,12 @@ import dev.kxki.keyapp.ime.ImeListener;
 import dev.kxki.keyapp.ime.ImeState;
 import dev.kxki.keyapp.ime.ImeTransport;
 import dev.kxki.keyapp.ime.SessionManager;
+import dev.kxki.keyapp.ime.TextEngine;
 import dev.kxki.keyapp.kana.KanaTable;
 import dev.kxki.keyapp.keyboard.DeleteRange;
 
 /** Serializes Mozc and projects its protocol output into Android edit operations. */
-final class JapaneseImeController implements AutoCloseable {
+public final class JapaneseImeController implements TextEngine {
 
     private final SessionManager sessions;
     private final ImeListener listener;
@@ -40,7 +41,7 @@ final class JapaneseImeController implements AutoCloseable {
     private int preeditCursor;
     private List<ImeCandidate> candidates = Collections.emptyList();
 
-    JapaneseImeController(Context context, ImeListener listener) {
+    public JapaneseImeController(Context context, ImeListener listener) {
         this.sessions = new SessionManager(new MozcEngine(context));
         this.listener = listener;
         this.ownedExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -53,7 +54,7 @@ final class JapaneseImeController implements AutoCloseable {
         this.callbacks = runnable -> main.post(runnable);
     }
 
-    JapaneseImeController(ImeTransport transport, ImeListener listener, Executor serial, Executor callbacks) {
+    public JapaneseImeController(ImeTransport transport, ImeListener listener, Executor serial, Executor callbacks) {
         this.sessions = new SessionManager(transport);
         this.listener = listener;
         this.serial = serial;
@@ -61,7 +62,7 @@ final class JapaneseImeController implements AutoCloseable {
         this.ownedExecutor = null;
     }
 
-    long begin(boolean isPrivate) {
+    @Override public long begin(boolean isPrivate) {
         long token = currentToken.incrementAndGet();
         serial.execute(() -> {
             if (!isCurrent(token)) return;
@@ -78,7 +79,7 @@ final class JapaneseImeController implements AutoCloseable {
         return token;
     }
 
-    void setJapanese(boolean enabled) {
+    @Override public void setJapanese(boolean enabled) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || japanese == enabled) return;
@@ -89,7 +90,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void setPrivateMode(boolean enabled) {
+    @Override public void setPrivateMode(boolean enabled) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token)) return;
@@ -101,7 +102,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void kana(String kana) {
+    @Override public void kana(String kana) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || !japanese || kana.isEmpty()) return;
@@ -123,7 +124,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void modifyKana() {
+    @Override public void modifyKana() {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || !japanese || rawKana.isEmpty() || preeditCursor == 0) return;
@@ -152,7 +153,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void backspace(boolean inJapaneseMode) {
+    @Override public void backspace(boolean inJapaneseMode) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token)) return;
@@ -182,7 +183,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void moveCursor(int horizontal, int vertical) {
+    @Override public void moveCursor(int horizontal, int vertical) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || (horizontal == 0 && vertical == 0)) return;
@@ -201,7 +202,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void deleteRange(DeleteRange range) {
+    @Override public void deleteRange(DeleteRange range) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token)) return;
@@ -211,7 +212,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void space(boolean inJapaneseMode) {
+    @Override public void space(boolean inJapaneseMode) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token)) return;
@@ -232,7 +233,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void selectCandidate(int candidateId) {
+    @Override public void selectCandidate(int candidateId) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || !sessions.hasSession() || !sessions.isAvailable()) return;
@@ -243,7 +244,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void rawText(String text) {
+    @Override public void rawText(String text) {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token) || text.isEmpty()) return;
@@ -252,7 +253,7 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void enter() {
+    @Override public void enter() {
         long token = currentToken.get();
         serial.execute(() -> {
             if (!isCurrent(token)) return;
@@ -264,14 +265,14 @@ final class JapaneseImeController implements AutoCloseable {
         });
     }
 
-    void finish() {
+    @Override public void finish() {
         long token = currentToken.get();
         serial.execute(() -> {
             if (isCurrent(token)) finishCurrent(token, true);
         });
     }
 
-    void abandon() {
+    @Override public void abandon() {
         currentToken.incrementAndGet();
         serial.execute(() -> {
             sessions.deleteSession();

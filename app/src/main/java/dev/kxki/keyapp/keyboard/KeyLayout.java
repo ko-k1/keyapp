@@ -65,75 +65,14 @@ public final class KeyLayout {
     }
 
     public static List<Key> build(Input in) {
-        List<Key> keys = new ArrayList<>();
-        if (in.clipboard) {
-            addRow(keys, in, new String[]{"Clear", "ABC", "かな"},
-                    new String[]{"#clear", "#en", "#jp"});
-            if (in.clipboardHistory.isEmpty()) {
-                addRow(keys, in, 1, new String[]{"Clipboard empty"}, new String[]{""});
-            } else {
-                for (int row = 0; row < in.visibleClipboardRows
-                        && in.clipboardScroll + row < in.clipboardHistory.size(); row++) {
-                    int index = in.clipboardScroll + row;
-                    addRow(keys, in, row + 1,
-                            new String[]{ClipboardLogic.clipboardLabel(in.clipboardHistory.get(index))},
-                            new String[]{"#clipboard:" + index});
-                }
-            }
-        } else if (in.symbols) {
-            buildSymbols(keys, in);
-        } else if (in.japanese && in.numberMode) {
-            buildJapaneseNumbers(keys, in);
-        } else if (in.japanese) {
-            buildJapanese(keys, in);
-        } else {
-            buildQwerty(keys, in);
-        }
-        return keys;
+        return dev.kxki.keyapp.layout.LayoutRegistry.build(in);
     }
 
-    private static void buildSymbols(List<Key> keys, Input in) {
-        if (in.shifted) {
-            addRow(keys, in, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"}, new String[]{"~", "`", "|", "^", "_", "=", "\\", "/", "[", "]"});
-            addRow(keys, in, 1, new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"}, new String[]{"{", "}", "<", ">", "€", "£", "¥", "©", "®", "™"});
-            addRow(keys, in, 2, new String[]{"⇪", "•", "√", "π", "÷", "×", "°", "¶", "⌫"}, new String[]{"#shift", "•", "√", "π", "÷", "×", "°", "¶", "#del"});
-            addSpaceRow(keys, in, 3, new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
-            return;
-        }
-        addRow(keys, in, split("1234567890"), split("1234567890"));
-        addRow(keys, in, 1, new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"}, new String[]{"@", "#", "$", "%", "&", "*", "-", "+", "(", ")"});
-        addRow(keys, in, 2, new String[]{"⇧", ",", "?", "!", "'", "\"", ":", ";", "⌫"}, new String[]{"#shift", ",", "?", "!", "'", "\"", ":", ";", "#del"});
-        addSpaceRow(keys, in, 3, new String[]{"ABC", "clip"}, new String[]{"#abc", "#clip"}, "space", " ", new String[]{".", "↵"}, new String[]{".", "#enter"});
-    }
-
-    private static void buildQwerty(List<Key> keys, Input in) {
-        String first = in.shifted ? "QWERTYUIOP" : "qwertyuiop";
-        String second = in.shifted ? "ASDFGHJKL" : "asdfghjkl";
-        addRow(keys, in, split(first), split("qwertyuiop"));
-        addRow(keys, in, 1, split(second), split("asdfghjkl"));
-        addRow(keys, in, 2, new String[]{in.shifted ? "⇪" : "⇧", in.shifted ? "Z" : "z", in.shifted ? "X" : "x", in.shifted ? "C" : "c", in.shifted ? "V" : "v", in.shifted ? "B" : "b", in.shifted ? "N" : "n", in.shifted ? "M" : "m", "⌫"}, new String[]{"#shift", "z", "x", "c", "v", "b", "n", "m", "#del"});
-        addSpaceRow(keys, in, 3, new String[]{"123", "かな"}, new String[]{"#sym", "#jp"}, "space", " ", new String[]{"clip", "↵"}, new String[]{"#clip", "#enter"});
-    }
-
-    private static void buildJapanese(List<Key> keys, Input in) {
-        addRow(keys, in, new String[]{"clip", "あ", "か", "さ", "⌫"}, new String[]{"#clip", "あ", "か", "さ", "#del"});
-        addRow(keys, in, 1, new String[]{"ABC", "た", "な", "は", "space"}, new String[]{"#en", "た", "な", "は", " "});
-        addRow(keys, in, 2, new String[]{"123", "ま", "や", "ら", ""}, new String[]{"#num", "ま", "や", "ら", ""});
-        addRow(keys, in, 3, new String[]{"", "小", "わ", "、。", "return"}, new String[]{"", "#small", "わ", "、", "#enter"});
-    }
-
-    private static void buildJapaneseNumbers(List<Key> keys, Input in) {
-        addRow(keys, in, new String[]{"clip", "1", "2", "3", "⌫"}, new String[]{"#clip", "1", "2", "3", "#del"});
-        addRow(keys, in, 1, new String[]{"ABC", "4", "5", "6", "space"}, new String[]{"#en", "4", "5", "6", " "});
-        addRow(keys, in, 2, new String[]{"かな", "7", "8", "9", ","}, new String[]{"#jp", "7", "8", "9", ","});
-        addRow(keys, in, 3, new String[]{"-", ".", "0", "/", "return"}, new String[]{"-", ".", "0", "/", "#enter"});
-    }
-
-    private static void addRow(List<Key> keys, Input in, String[] labels, String[] values) {
+    public static void addRow(List<Key> keys, Input in, String[] labels, String[] values) {
         addRow(keys, in, 0, labels, values);
     }
 
-    private static void addRow(List<Key> keys, Input in, int row, String[] labels, String[] values) {
+    public static void addRow(List<Key> keys, Input in, int row, String[] labels, String[] values) {
         float top = in.topPx + in.pitchPx * row;
         float x = in.leftPx + in.marginPx;
         float keyWidth = (in.widthPx - in.marginPx * 2 - in.gapPx * (labels.length - 1)) / labels.length;
@@ -143,7 +82,7 @@ public final class KeyLayout {
         }
     }
 
-    private static void addSpaceRow(List<Key> keys, Input in, int row, String[] leftLabels,
+    public static void addSpaceRow(List<Key> keys, Input in, int row, String[] leftLabels,
             String[] leftValues, String centerLabel, String centerValue,
             String[] rightLabels, String[] rightValues) {
         float top = in.topPx + in.pitchPx * row;
@@ -199,7 +138,7 @@ public final class KeyLayout {
         return best;
     }
 
-    private static String[] split(String text) {
+    public static String[] split(String text) {
         String[] values = new String[text.length()];
         for (int i = 0; i < text.length(); i++) values[i] = String.valueOf(text.charAt(i));
         return values;

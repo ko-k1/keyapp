@@ -43,6 +43,30 @@ public final class KeyboardPrefsRepository {
         preferences.edit().putBoolean(PrefsKeys.FLICK_PREVIEW, enabled).apply();
     }
 
+    public static boolean hapticEnabled(SharedPreferences preferences, boolean defValue) {
+        return preferences.getBoolean(PrefsKeys.HAPTIC_ENABLED, defValue);
+    }
+
+    public static void setHapticEnabled(SharedPreferences preferences, boolean enabled) {
+        preferences.edit().putBoolean(PrefsKeys.HAPTIC_ENABLED, enabled).apply();
+    }
+
+    public static boolean keyFadeEnabled(SharedPreferences preferences, boolean defValue) {
+        return preferences.getBoolean(PrefsKeys.KEY_FADE_ENABLED, defValue);
+    }
+
+    public static void setKeyFadeEnabled(SharedPreferences preferences, boolean enabled) {
+        preferences.edit().putBoolean(PrefsKeys.KEY_FADE_ENABLED, enabled).apply();
+    }
+
+    public static boolean onboardingDone(SharedPreferences preferences) {
+        return preferences.getBoolean(PrefsKeys.ONBOARDING_DONE, false);
+    }
+
+    public static void setOnboardingDone(SharedPreferences preferences, boolean done) {
+        preferences.edit().putBoolean(PrefsKeys.ONBOARDING_DONE, done).apply();
+    }
+
     public static void setKeyGap(SharedPreferences preferences, int value) {
         preferences.edit().putInt(PrefsKeys.KEY_GAP, value).apply();
     }
@@ -80,6 +104,8 @@ public final class KeyboardPrefsRepository {
                 keyGap(preferences, KeyboardView.DEFAULT_KEY_GAP_DP),
                 keyRadius(preferences, KeyboardView.DEFAULT_KEY_RADIUS_DP));
         keyboard.setFlickPreviewEnabled(flickPreview(preferences, true));
+        keyboard.setKeyFadeEnabled(keyFadeEnabled(preferences, true));
+        keyboard.setHapticEnabled(hapticEnabled(preferences, true));
     }
 
     public static int loadHeight(Context context, int defValue) {
